@@ -1,0 +1,36 @@
+Metadata-Version: 2.4
+Name: daily-knowledge-digest
+Version: 0.1.0
+Summary: Daily Knowledge Digest — Milestone 1 foundation
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: pydantic>=2.5
+Requires-Dist: python-dotenv>=1.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4; extra == "dev"
+
+# Daily Knowledge Digest
+
+Milestone 1: project skeleton, configuration, Pydantic models, SQLite storage, `StateRepository`, and run lock.
+
+## Setup
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate   # Windows
+pip install -e ".[dev]"
+```
+
+Copy `.env.example` to `.env` and adjust paths if needed.
+
+## Tests
+
+```bash
+python -m pytest
+```
+
+## CLI (placeholder)
+
+```bash
+python -m app.main --help
+```
