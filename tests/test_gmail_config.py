@@ -37,6 +37,17 @@ def test_load_settings_parses_csv_senders(monkeypatch) -> None:
     assert settings.newsletter_senders == ("a@x.com", "b@y.com", "c@z.com")
 
 
+def test_newsletter_sender_count_matches_csv_parse(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "NEWSLETTER_SENDERS",
+        " sender-a@test.fake , sender-b@test.fake,, sender-c@test.fake ",
+    )
+    settings = load_settings()
+    expected = ("sender-a@test.fake", "sender-b@test.fake", "sender-c@test.fake")
+    assert settings.newsletter_senders == expected
+    assert len(settings.newsletter_senders) == len(expected)
+
+
 def test_load_settings_reads_recipient_and_lookback(monkeypatch) -> None:
     monkeypatch.setenv("DIGEST_RECIPIENT_EMAIL", "you@example.com")
     monkeypatch.setenv("GMAIL_LOOKBACK_DAYS", "5")

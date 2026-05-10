@@ -1,27 +1,36 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
-from app.config import load_settings
+from app.config import format_gmail_config_summary, load_settings
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Daily Knowledge Digest CLI (Milestone 1 placeholder).",
+        description="Daily Knowledge Digest CLI.",
     )
-    parser.add_argument(
-        "--show-config",
-        action="store_true",
-        help="Print resolved settings (paths and lock parameters).",
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    cfg = sub.add_parser(
+        "show-config",
+        help="Print a safe Gmail-oriented configuration summary (no secrets).",
     )
-    args = parser.parse_args()
-    settings = load_settings()
-    if args.show_config:
-        print(f"db_path={settings.db_path}")
-        print(f"lock_name={settings.lock_name}")
-        print(f"lock_ttl_minutes={settings.lock_ttl_minutes}")
-        print(f"max_email_retries={settings.max_email_retries}")
+    cfg.set_defaults(handler=_cmd_show_config)
+
+    args = parser.parse_args(argv)
+
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        parser.print_help()
+        return 2
+    return handler(args)
+
+
+def _cmd_show_config(_args: argparse.Namespace) -> int:
+    print(format_gmail_config_summary(load_settings()), end="")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

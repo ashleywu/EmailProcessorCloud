@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.config import load_settings
 from app.gmail.client import GmailClient
 from app.gmail.fetcher import (
     DEFAULT_EXCLUDED_LABELS,
@@ -160,6 +161,28 @@ def test_fetch_recent_paginates_until_no_token() -> None:
     assert len(list_calls) == 2
     assert "pageToken" not in list_calls[0]
     assert list_calls[1]["pageToken"] == "t1"
+
+
+def test_fetch_recent_gmail_query_includes_every_loaded_sender(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "NEWSLETTER_SENDERS",
+        "digest-one@test.fake,digest-two@test.fake,digest-three@test.fake",
+    )
+    settings = load_settings()
+    assert len(settings.newsletter_senders) == 3
+
+    service = FakeGmailService(list_results=[{"messages": []}])
+    client = GmailClient(service_factory=lambda: service)
+    fetcher = GmailFetcher(
+        client,
+        senders=settings.newsletter_senders,
+        lookback_days=settings.gmail_lookback_days,
+    )
+    fetcher.fetch_recent(now=FIXED_NOW)
+
+    q = service.call_kwargs("messages.list")[0]["q"]
+    for addr in settings.newsletter_senders:
+        assert f"from:{addr}" in q
 
 
 def test_fetch_recent_returns_empty_for_no_senders() -> None:

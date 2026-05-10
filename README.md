@@ -1,7 +1,7 @@
 # Daily Knowledge Digest
 
 - **Milestone 1**: project skeleton, configuration, Pydantic models, SQLite storage, `StateRepository`, run lock.
-- **Milestone 2**: Gmail integration layer (`app/gmail/`) — `GmailClient`, `GmailFetcher`, `GmailLabeler`, `GmailSender`. All collaborators are mockable; tests run without network or real credentials.
+- **Milestone 2**: Gmail integration layer (`app/gmail/`) — `GmailClient`, `GmailFetcher`, `GmailLabeler`, `GmailSender`. Use `build_gmail_client(load_settings())` so OAuth paths stay centralized. All collaborators are mockable; tests run without network or real credentials.
 
 ## Setup
 
@@ -22,8 +22,11 @@ python -m pytest
 
 Tests use injected fake services via `GmailClient(service_factory=...)`, so no Google libraries or credentials are required.
 
-## CLI (placeholder)
+## CLI
 
 ```bash
 python -m app.main --help
+python -m app.main show-config
 ```
+
+`show-config` prints a safe Gmail configuration summary (paths, scopes, pipeline label names only — no token or credential file contents).
