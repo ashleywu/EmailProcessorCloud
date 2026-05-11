@@ -1,5 +1,11 @@
+beautifulsoup4>=4.12
 pydantic>=2.5
 python-dotenv>=1.0
 
 [dev]
 pytest>=7.4
+
+[gmail]
+google-api-python-client>=2.120
+google-auth>=2.29
+google-auth-oauthlib>=1.2

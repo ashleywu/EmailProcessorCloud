@@ -9,6 +9,7 @@ description = "Daily Knowledge Digest — Milestone 2 (Gmail integration)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "beautifulsoup4>=4.12",
   "pydantic>=2.5",
   "python-dotenv>=1.0",
 ]
