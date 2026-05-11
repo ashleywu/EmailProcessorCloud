@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+import base64
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from html import escape as html_escape
+from typing import Any
 
 from app.models.email import EmailInput
 
@@ -87,6 +90,40 @@ def _parse_date(raw: str | None) -> datetime | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+def _decode_body_data(data: str | None) -> bytes:
+    if not data:
+        return b""
+    pad = (-len(data)) % 4
+    return base64.urlsafe_b64decode(data + ("=" * pad))
+
+
+def extract_html_from_gmail_payload(payload: Mapping[str, Any]) -> str:
+    """Best-effort HTML body from a Gmail ``messages.get`` payload (full format)."""
+
+    def from_part(part: Mapping[str, Any]) -> str | None:
+        mime = str(part.get("mimeType") or "")
+        if mime == "text/html":
+            raw = _decode_body_data((part.get("body") or {}).get("data"))
+            return raw.decode("utf-8", errors="replace")
+        nested = part.get("parts") or []
+        for p in nested:
+            got = from_part(p)
+            if got:
+                return got
+        return None
+
+    root = payload.get("payload") or {}
+    html = from_part(root)
+    if html:
+        return html
+    mime = str(root.get("mimeType") or "")
+    if mime == "text/plain":
+        raw = _decode_body_data((root.get("body") or {}).get("data"))
+        text = raw.decode("utf-8", errors="replace")
+        return f"<html><body><pre>{html_escape(text)}</pre></body></html>"
+    return "<html><body></body></html>"
 
 
 def parse_gmail_message(payload: dict) -> GmailMessage:
@@ -186,3 +223,13 @@ class GmailFetcher:
             )
         )
         return parse_gmail_message(payload)
+
+    def fetch_message_html(self, message_id: str) -> str:
+        """Download full message and return HTML (or HTML-wrapped plain text)."""
+
+        payload = self._client.execute(
+            lambda svc, mid=message_id: svc.users()
+            .messages()
+            .get(userId=self._user_id, id=mid, format="full"),
+        )
+        return extract_html_from_gmail_payload(payload)

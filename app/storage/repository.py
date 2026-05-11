@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -9,6 +11,7 @@ from pydantic import BaseModel
 
 from app.models.digest import ProcessedEmail
 from app.models.email import EmailInput
+from app.models.outputs import PROCESSOR_OUTPUT_KIND, RouterDecision, RouteCategory
 from app.storage.db import init_schema, open_initialized
 
 
@@ -20,6 +23,17 @@ def _parse_dt(value: str | None) -> datetime | None:
     if value is None:
         return None
     return datetime.fromisoformat(value)
+
+
+@dataclass(frozen=True, slots=True)
+class AgentOutputRecord:
+    """Latest agent output row for one (email_id, kind), see ``get_outputs_by_email_ids``."""
+
+    id: int
+    email_id: int
+    kind: str
+    payload: str
+    created_at: str
 
 
 class StateRepository:
@@ -81,15 +95,15 @@ class StateRepository:
         *,
         status: str = "draft",
         title: str | None = None,
-        body_markdown: str | None = None,
+        body_html: str | None = None,
     ) -> int:
         now = _utc_now_iso()
         cur = self._conn.execute(
             """
-            INSERT INTO digests (status, title, body_markdown, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO digests (status, title, body_html, error_message, created_at, updated_at)
+            VALUES (?, ?, ?, NULL, ?, ?)
             """,
-            (status, title, body_markdown, now, now),
+            (status, title, body_html, now, now),
         )
         self._conn.commit()
         return int(cur.lastrowid)
@@ -133,15 +147,119 @@ class StateRepository:
             )
         self._conn.commit()
 
-    def update_digest_status(self, digest_id: int, status: str) -> None:
+    def update_digest_status(
+        self,
+        digest_id: int,
+        status: str,
+        *,
+        error_message: str | None = None,
+    ) -> None:
         now = _utc_now_iso()
-        self._conn.execute(
-            """
-            UPDATE digests SET status = ?, updated_at = ? WHERE id = ?
-            """,
-            (status, now, digest_id),
-        )
+        if error_message is not None:
+            self._conn.execute(
+                """
+                UPDATE digests SET status = ?, updated_at = ?, error_message = ?
+                WHERE id = ?
+                """,
+                (status, now, error_message, digest_id),
+            )
+        else:
+            self._conn.execute(
+                """
+                UPDATE digests SET status = ?, updated_at = ? WHERE id = ?
+                """,
+                (status, now, digest_id),
+            )
         self._conn.commit()
+
+    def update_digest_body(
+        self,
+        digest_id: int,
+        *,
+        body_html: str | None,
+        title: str | None = None,
+    ) -> None:
+        now = _utc_now_iso()
+        if title is not None:
+            self._conn.execute(
+                """
+                UPDATE digests SET body_html = ?, title = ?, updated_at = ? WHERE id = ?
+                """,
+                (body_html, title, now, digest_id),
+            )
+        else:
+            self._conn.execute(
+                """
+                UPDATE digests SET body_html = ?, updated_at = ? WHERE id = ?
+                """,
+                (body_html, now, digest_id),
+            )
+        self._conn.commit()
+
+    def get_outputs_by_email_ids(self, email_ids: Sequence[int]) -> list[AgentOutputRecord]:
+        """Return the latest row per (email_id, kind) by highest ``id``.
+
+        When multiple outputs share the same (email_id, kind), only the row
+        with the greatest ``id`` is returned (proxy for latest ``created_at``).
+        """
+        ids = list(dict.fromkeys(int(i) for i in email_ids))
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        sql = f"""
+            SELECT ao.id, ao.email_id, ao.kind, ao.payload, ao.created_at
+            FROM agent_outputs ao
+            INNER JOIN (
+              SELECT email_id, kind, MAX(id) AS max_id
+              FROM agent_outputs
+              WHERE email_id IN ({placeholders})
+              GROUP BY email_id, kind
+            ) t
+              ON ao.email_id = t.email_id
+             AND ao.kind = t.kind
+             AND ao.id = t.max_id
+            ORDER BY ao.email_id, ao.kind
+        """
+        rows = self._conn.execute(sql, ids).fetchall()
+        return [
+            AgentOutputRecord(
+                id=int(r["id"]),
+                email_id=int(r["email_id"]),
+                kind=str(r["kind"]),
+                payload=str(r["payload"]),
+                created_at=str(r["created_at"]),
+            )
+            for r in rows
+        ]
+
+    def try_reuse_complete_outputs(self, email_id: int) -> RouteCategory | None:
+        """Return router category when latest ``router`` + matching processor rows exist.
+
+        Enables a later ``run_daily`` after quality-gate or send failure to compose a new
+        digest from persisted structured outputs only (no Gmail full fetch, no LLM).
+        """
+
+        rows = self.get_outputs_by_email_ids([email_id])
+        by_kind = {r.kind: r.payload for r in rows}
+        if "router" not in by_kind:
+            return None
+        try:
+            decision = RouterDecision.model_validate_json(by_kind["router"])
+        except Exception:
+            return None
+        proc_kind = PROCESSOR_OUTPUT_KIND[decision.category]
+        if proc_kind not in by_kind:
+            return None
+        return decision.category
+
+    def get_email_subject_by_id(self, email_id: int) -> str | None:
+        row = self._conn.execute(
+            "SELECT subject FROM emails WHERE id = ?",
+            (email_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return row["subject"]
 
     def fetch_unprocessed_emails(self) -> list[ProcessedEmail]:
         rows = self._conn.execute(

@@ -12,6 +12,15 @@ class RouteCategory(StrEnum):
     NOISE = "NOISE"
 
 
+# Persisted ``agent_outputs.kind`` for each router category (single source of truth).
+PROCESSOR_OUTPUT_KIND: dict[RouteCategory, str] = {
+    RouteCategory.TECHNOLOGY: "technology",
+    RouteCategory.RADAR: "radar",
+    RouteCategory.LEADERSHIP: "leadership",
+    RouteCategory.NOISE: "noise",
+}
+
+
 class RouterDecision(BaseModel):
     category: RouteCategory
     confidence: float = Field(..., ge=0.0, le=1.0)

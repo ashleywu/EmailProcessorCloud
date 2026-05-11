@@ -4,7 +4,7 @@ import pytest
 
 from app.models.email import EmailInput
 from app.models.outputs import RouterDecision, RouteCategory, TechnologyOutput
-from app.storage.repository import StateRepository
+from app.storage.repository import AgentOutputRecord, StateRepository
 
 
 @pytest.fixture
@@ -86,3 +86,50 @@ def test_technology_output_saved(repo: StateRepository) -> None:
         "technology",
         TechnologyOutput(core_pain_point="sum"),
     )
+
+
+def test_try_reuse_complete_outputs(repo: StateRepository) -> None:
+    eid = repo.upsert_email(EmailInput(message_id="r1"))
+    assert repo.try_reuse_complete_outputs(eid) is None
+    repo.save_agent_output(
+        eid,
+        "router",
+        RouterDecision(category=RouteCategory.TECHNOLOGY, confidence=0.8),
+    )
+    assert repo.try_reuse_complete_outputs(eid) is None
+    repo.save_agent_output(
+        eid,
+        "technology",
+        TechnologyOutput(core_pain_point="x"),
+    )
+    assert repo.try_reuse_complete_outputs(eid) == RouteCategory.TECHNOLOGY
+
+
+def test_get_outputs_by_email_ids_latest_per_kind(repo: StateRepository) -> None:
+    eid = repo.upsert_email(EmailInput(message_id="multi"))
+    repo.save_agent_output(
+        eid,
+        "router",
+        RouterDecision(category=RouteCategory.NOISE, confidence=0.5),
+    )
+    repo.save_agent_output(
+        eid,
+        "router",
+        RouterDecision(category=RouteCategory.TECHNOLOGY, confidence=0.9),
+    )
+    rows = repo.get_outputs_by_email_ids([eid])
+    assert len(rows) == 1
+    r = rows[0]
+    assert isinstance(r, AgentOutputRecord)
+    d = RouterDecision.model_validate_json(r.payload)
+    assert d.category == RouteCategory.TECHNOLOGY
+
+
+def test_update_digest_body(repo: StateRepository) -> None:
+    did = repo.create_digest(status="draft", title="T", body_html=None)
+    repo.update_digest_body(did, body_html="<p>x</p>")
+    row = repo.connection.execute(
+        "SELECT body_html FROM digests WHERE id = ?",
+        (did,),
+    ).fetchone()
+    assert row["body_html"] == "<p>x</p>"

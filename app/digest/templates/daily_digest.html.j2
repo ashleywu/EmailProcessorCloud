@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{{ title | e }}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; line-height: 1.5; color: #1a1a1a; max-width: 720px; margin: 0 auto; padding: 1rem; }
+    h1 { font-size: 1.35rem; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem; }
+    h2 { font-size: 1.1rem; margin-top: 1.5rem; color: #333; }
+    .note { background: #f6f8fa; border-left: 3px solid #0969da; padding: 0.75rem 1rem; margin: 1rem 0; font-size: 0.9rem; }
+    .item { margin: 0.75rem 0; padding-bottom: 0.75rem; border-bottom: 1px solid #eee; }
+    .sub { font-size: 0.85rem; color: #555; }
+    ul { margin: 0.25rem 0; padding-left: 1.2rem; }
+  </style>
+</head>
+<body>
+{% if quality_notes %}
+  <div class="note"><strong>Revision notes:</strong> {{ quality_notes | e }}</div>
+{% endif %}
+<h1>{{ title | e }}</h1>
+
+<h2>Technical Index</h2>
+{% if technical_index %}
+  {% for it in technical_index %}
+  <div class="item">
+    <div><strong>{{ it.subject | e }}</strong></div>
+    <div>{{ it.core_pain_point | e }}</div>
+    {% if it.image_urls %}
+    <div class="sub">Images: {% for u in it.image_urls %}{{ u | e }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="sub">No items in this section.</p>
+{% endif %}
+
+<h2>AI Radar</h2>
+{% if ai_radar %}
+  {% for it in ai_radar %}
+  <div class="item">
+    <div><strong>{{ it.subject | e }}</strong></div>
+    {% if it.summary %}<div class="sub">{{ it.summary | e }}</div>{% endif %}
+    <ul>
+    {% for row in it.items %}
+      <li>{{ row.entity | e }} — {{ row.impact_or_action | e }}{% if row.url %} (<span class="sub">{{ row.url | e }}</span>){% endif %}</li>
+    {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="sub">No items in this section.</p>
+{% endif %}
+
+<h2>Leadership Signals</h2>
+{% if leadership_signals %}
+  {% for it in leadership_signals %}
+  <div class="item">
+    <div><strong>{{ it.subject | e }}</strong></div>
+    {% if it.summary %}<div class="sub">{{ it.summary | e }}</div>{% endif %}
+    <ul>
+    {% for s in it.signals %}
+      <li><strong>{{ s.theme | e }}</strong>: {{ s.insight | e }}; Action: {{ s.actionable_item | e }}</li>
+    {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="sub">No items in this section.</p>
+{% endif %}
+
+<h2>Filtered Noise</h2>
+{% if filtered_noise %}
+  {% for it in filtered_noise %}
+  <div class="item">
+    <div><strong>{{ it.subject | e }}</strong></div>
+    <div class="sub">{{ it.reason | e }}</div>
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="sub">No items in this section.</p>
+{% endif %}
+
+<p class="sub">Automated daily digest.</p>
+</body>
+</html>

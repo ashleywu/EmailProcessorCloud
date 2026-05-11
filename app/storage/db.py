@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS digests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   status TEXT NOT NULL,
   title TEXT,
-  body_markdown TEXT,
+  body_html TEXT,
+  error_message TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -65,8 +66,28 @@ CREATE TABLE IF NOT EXISTS run_locks (
 """
 
 
+def _migrate_legacy_digest_columns(conn: sqlite3.Connection) -> None:
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='digests'",
+    )
+    if cur.fetchone() is None:
+        return
+    info = conn.execute("PRAGMA table_info(digests)").fetchall()
+    col_names = {str(row[1]) for row in info}
+    if "body_markdown" in col_names and "body_html" not in col_names:
+        conn.execute("ALTER TABLE digests RENAME COLUMN body_markdown TO body_html")
+        col_names.discard("body_markdown")
+        col_names.add("body_html")
+    if "body_html" not in col_names:
+        conn.execute("ALTER TABLE digests ADD COLUMN body_html TEXT")
+        col_names.add("body_html")
+    if "error_message" not in col_names:
+        conn.execute("ALTER TABLE digests ADD COLUMN error_message TEXT")
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
+    _migrate_legacy_digest_columns(conn)
     conn.commit()
 
 

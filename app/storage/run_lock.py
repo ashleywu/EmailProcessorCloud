@@ -11,7 +11,16 @@ DEFAULT_TTL_MINUTES = 60
 
 
 class RunLock:
-    """Advisory lock stored in `run_locks`; expired rows may be stolen."""
+    """Advisory lock stored in `run_locks`; expired rows may be stolen.
+
+    Only the process instance that successfully called ``acquire`` may
+    release the lock. ``release`` is a no-op if this instance never acquired
+    or if the row no longer matches the lock token acquired here (e.g.
+    stolen after TTL).
+
+    Calling ``release`` without a prior successful ``acquire`` must not delete
+    another holder's active lock row.
+    """
 
     def __init__(
         self,
@@ -23,6 +32,7 @@ class RunLock:
         self._conn = open_initialized(db_path)
         self._lock_name = lock_name
         self._ttl_minutes = ttl_minutes
+        self._lock_token_locked_at: str | None = None
 
     @property
     def lock_name(self) -> str:
@@ -33,6 +43,8 @@ class RunLock:
 
     def acquire(self, owner: str | None = None) -> bool:
         """Return True if lock acquired; False if an active (non-expired) lock exists."""
+
+        self._lock_token_locked_at = None
         conn = self._conn
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -49,6 +61,7 @@ class RunLock:
 
             locked_at = now
             expires_at = locked_at + timedelta(minutes=self._ttl_minutes)
+            locked_iso = locked_at.isoformat()
             conn.execute(
                 """
                 INSERT INTO run_locks (lock_name, locked_at, expires_at, owner)
@@ -60,20 +73,36 @@ class RunLock:
                 """,
                 (
                     self._lock_name,
-                    locked_at.isoformat(),
+                    locked_iso,
                     expires_at.isoformat(),
                     owner,
                 ),
             )
             conn.commit()
+            self._lock_token_locked_at = locked_iso
             return True
         except Exception:
             conn.rollback()
+            self._lock_token_locked_at = None
             raise
 
     def release(self) -> None:
-        self._conn.execute(
-            "DELETE FROM run_locks WHERE lock_name = ?",
+        """Remove the lock row only if this instance holds it."""
+
+        token = self._lock_token_locked_at
+        self._lock_token_locked_at = None
+        if token is None:
+            return
+        row = self._conn.execute(
+            "SELECT locked_at FROM run_locks WHERE lock_name = ?",
             (self._lock_name,),
+        ).fetchone()
+        if row is None:
+            return
+        if str(row["locked_at"]) != token:
+            return
+        self._conn.execute(
+            "DELETE FROM run_locks WHERE lock_name = ? AND locked_at = ?",
+            (self._lock_name, token),
         )
         self._conn.commit()

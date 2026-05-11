@@ -6,12 +6,13 @@ from pydantic import BaseModel, Field
 
 
 class DigestRecord(BaseModel):
-    """Persisted digest row shape (composition logic lives in later milestones)."""
+    """Persisted digest row shape."""
 
     id: int
     status: str
     title: str | None = None
-    body_markdown: str | None = None
+    body_html: str | None = None
+    error_message: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
