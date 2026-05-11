@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,15 @@ class AgentOutputRecord:
     kind: str
     payload: str
     created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class DigestPreviewRecord:
+    """One digest row selected for HTML preview (UTC calendar-day semantics)."""
+
+    digest_id: int
+    status: str
+    body_html: str | None
 
 
 class StateRepository:
@@ -296,4 +305,30 @@ class StateRepository:
             retry_count=int(data.get("retry_count") or 0),
             error_message=data.get("error_message"),
             updated_at=_parse_dt(data.get("updated_at")),
+        )
+
+    def fetch_latest_digest_for_utc_calendar_day(self, day: date) -> DigestPreviewRecord | None:
+        """Return the digest with the latest ``created_at`` whose instant falls on ``day`` in UTC.
+
+        Rows are matched by half-open interval ``[day 00:00 UTC, next day 00:00 UTC)`` using
+        ISO8601 ``created_at`` strings stored in SQLite.
+        """
+
+        start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        end = start + timedelta(days=1)
+        row = self._conn.execute(
+            """
+            SELECT id, status, body_html FROM digests
+            WHERE created_at >= ? AND created_at < ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (start.isoformat(), end.isoformat()),
+        ).fetchone()
+        if row is None:
+            return None
+        return DigestPreviewRecord(
+            digest_id=int(row["id"]),
+            status=str(row["status"]),
+            body_html=row["body_html"],
         )

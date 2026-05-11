@@ -18,8 +18,6 @@ from app.parsing.parser import parse_newsletter_html
 from app.storage.repository import StateRepository
 from app.storage.run_lock import RunLock
 
-_MAX_QUALITY_ATTEMPTS = 3
-
 DIGEST_STATUS_DRAFT = "draft"
 DIGEST_STATUS_SENT = "sent"
 DIGEST_STATUS_EMPTY = "empty"
@@ -48,6 +46,7 @@ class DailyDigestAgent:
         digest_to: str,
         digest_subject_prefix: str = "Daily digest",
         lock_owner: str | None = None,
+        max_quality_gate_attempts: int = 3,
     ) -> None:
         self._repo = repo
         self._run_lock = run_lock
@@ -64,17 +63,24 @@ class DailyDigestAgent:
         self._digest_to = digest_to
         self._subject_prefix = digest_subject_prefix
         self._lock_owner = lock_owner
+        self._max_quality_gate_attempts = max_quality_gate_attempts
 
-    def run_daily(self) -> None:
+    def run_daily(self) -> bool:
+        """Run the daily pipeline.
+
+        Returns ``False`` if the run lock could not be acquired; ``True`` when the lock was held
+        for the attempt (including early exits such as no candidates or send failure).
+        """
+
         acquired = self._run_lock.acquire(owner=self._lock_owner)
         if not acquired:
-            return
+            return False
         digest_id: int | None = None
         success_links: list[tuple[int, str, RouteCategory]] = []
         try:
             candidates = self._merge_candidates()
             if not candidates:
-                return
+                return True
 
             digest_id = self._repo.create_digest(
                 status=DIGEST_STATUS_DRAFT,
@@ -87,7 +93,7 @@ class DailyDigestAgent:
 
             if not success_links:
                 self._repo.update_digest_status(digest_id, DIGEST_STATUS_EMPTY)
-                return
+                return True
 
             email_ids = [lid[0] for lid in success_links]
             rows = self._repo.get_outputs_by_email_ids(email_ids)
@@ -102,7 +108,7 @@ class DailyDigestAgent:
                     DIGEST_STATUS_ERROR,
                     error_message="quality_gate: " + "; ".join(exc.problems),
                 )
-                return
+                return True
 
             self._repo.update_digest_body(digest_id, body_html=html)
 
@@ -118,7 +124,7 @@ class DailyDigestAgent:
                     DIGEST_STATUS_SEND_FAILED,
                     error_message=f"send_failed: {exc}",
                 )
-                return
+                return True
 
             self._repo.update_digest_status(digest_id, DIGEST_STATUS_SENT)
             for email_id, message_id, category in success_links:
@@ -126,6 +132,8 @@ class DailyDigestAgent:
                 self._labeler.mark_processed(message_id)
                 self._labeler.archive(message_id)
                 self._repo.update_email_status(email_id, "archived")
+
+            return True
 
         finally:
             self._run_lock.release()
@@ -185,13 +193,13 @@ class DailyDigestAgent:
             return None
 
     def _compose_with_quality_gate(self, rows, subjects):
-        problems: list[str] = []
         html = self._composer.compose(rows, subjects, revision_problems=())
-        for attempt in range(_MAX_QUALITY_ATTEMPTS):
+        max_attempts = self._max_quality_gate_attempts
+        for attempt in range(max_attempts):
             result = self._quality_gate.check(html)
             if result.ok:
                 return html
             problems = list(result.problems)
-            if attempt >= _MAX_QUALITY_ATTEMPTS - 1:
+            if attempt >= max_attempts - 1:
                 raise QualityGateFailedException(problems, last_html=html)
             html = self._composer.compose(rows, subjects, revision_problems=problems)

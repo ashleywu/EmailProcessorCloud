@@ -1,50 +1,110 @@
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+from pydantic import Field, computed_field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dotenv import load_dotenv
 
-load_dotenv()
+
+def redact_secret(value: str | None) -> str:
+    """Mask API keys and similar secrets for safe terminal output (e.g. ``show-config``)."""
+
+    if value is None or not str(value).strip():
+        return "(not set)"
+    s = str(value).strip()
+    if len(s) <= 7:
+        return "***"
+    sl = s.lower()
+    if sl.startswith("sk-proj-"):
+        return "sk-proj-******"
+    if s.startswith("sk-"):
+        return "sk-******"
+    return s[:4] + "******"
 
 
-def _int_env(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None or raw == "":
-        return default
-    return int(raw)
+class Settings(BaseSettings):
+    """Runtime configuration from environment (see `.env.example`).
+
+    Loaded once via :func:`load_settings`. Use explicit fields — do not read secrets with
+    ``os.getenv`` elsewhere.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file_encoding="utf-8",
+        extra="ignore",
+        frozen=True,
+    )
+
+    db_path: Path = Field(
+        default_factory=lambda: Path.cwd() / "data" / "daily_digest.db",
+        validation_alias="DAILY_DIGEST_DB_PATH",
+    )
+    lock_name: str = Field(default="daily_digest_agent", validation_alias="DAILY_DIGEST_LOCK_NAME")
+    lock_ttl_minutes: int = Field(default=60, validation_alias="DAILY_DIGEST_LOCK_TTL_MINUTES")
+    max_email_retries: int = Field(default=3, validation_alias="DAILY_DIGEST_MAX_EMAIL_RETRIES")
+    #: Maximum number of compose → quality-gate rounds (includes the first draft).
+    max_quality_gate_attempts: int = Field(
+        default=3,
+        ge=1,
+        validation_alias="DAILY_DIGEST_MAX_QUALITY_GATE_ATTEMPTS",
+    )
+
+    openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    router_model: str = Field(default="gpt-4o-mini", validation_alias="ROUTER_MODEL")
+    processor_model: str = Field(default="gpt-4o-mini", validation_alias="PROCESSOR_MODEL")
+
+    digest_recipient_email: str | None = Field(default=None, validation_alias="DIGEST_RECIPIENT_EMAIL")
+    newsletter_senders_csv: str = Field(default="", validation_alias="NEWSLETTER_SENDERS")
+
+    @field_validator("openai_api_key", "digest_recipient_email", mode="before")
+    @classmethod
+    def _empty_str_none(cls, v: Any) -> Any:
+        if v == "":
+            return None
+        return v
+
+    gmail_credentials_path: Path = Field(
+        default_factory=lambda: Path.cwd() / "secrets" / "credentials.json",
+        validation_alias="GMAIL_CREDENTIALS_PATH",
+    )
+    gmail_token_path: Path = Field(
+        default_factory=lambda: Path.cwd() / "secrets" / "token.json",
+        validation_alias="GMAIL_TOKEN_PATH",
+    )
+    gmail_lookback_days: int = Field(default=2, validation_alias="GMAIL_LOOKBACK_DAYS")
+
+    @computed_field
+    @property
+    def newsletter_senders(self) -> tuple[str, ...]:
+        raw = self.newsletter_senders_csv
+        if raw is None or not str(raw).strip():
+            return ()
+        parts = [p.strip() for p in str(raw).split(",")]
+        return tuple(p for p in parts if p)
+
+    @field_validator("newsletter_senders_csv", mode="before")
+    @classmethod
+    def _coerce_senders_csv(cls, v: Any) -> Any:
+        if v is None:
+            return ""
+        return v
+
+    @field_validator("db_path", "gmail_credentials_path", "gmail_token_path", mode="before")
+    @classmethod
+    def _expand_path(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        return Path(v).expanduser() if not isinstance(v, Path) else v.expanduser()
 
 
-def _path_env(name: str, default: Path) -> Path:
-    raw = os.environ.get(name)
-    if raw is None or raw == "":
-        return default
-    return Path(raw).expanduser()
+def load_settings() -> Settings:
+    """Load settings from environment variables and optional ``.env`` (via python-dotenv)."""
 
-
-def _csv_env(name: str) -> tuple[str, ...]:
-    """Parse a comma-separated list from ``os.environ`` (from ``.env`` or shell)."""
-
-    raw = os.environ.get(name, "")
-    parts = [item.strip() for item in raw.split(",")]
-    return tuple(p for p in parts if p)
-
-
-@dataclass(frozen=True, slots=True)
-class Settings:
-    """Runtime configuration from environment (see `.env.example`)."""
-
-    db_path: Path
-    lock_name: str
-    lock_ttl_minutes: int
-    max_email_retries: int
-
-    newsletter_senders: tuple[str, ...] = field(default_factory=tuple)
-    digest_recipient_email: str | None = None
-    gmail_credentials_path: Path = field(default_factory=lambda: Path("secrets/credentials.json"))
-    gmail_token_path: Path = field(default_factory=lambda: Path("secrets/token.json"))
-    gmail_lookback_days: int = 2
+    load_dotenv()
+    return Settings()
 
 
 def build_gmail_client(settings: Settings):
@@ -62,16 +122,22 @@ def build_gmail_client(settings: Settings):
 
 
 def format_gmail_config_summary(settings: Settings) -> str:
-    """Return a multi-line Gmail configuration summary safe for terminals.
+    """Return a multi-line configuration summary safe for terminals.
 
-    Only uses fields from ``settings`` plus static scopes and label names.
-    Credential / token JSON files are never read — no secrets are emitted.
+    Credential / token JSON files are never read — no secrets from disk are emitted.
+    ``OPENAI_API_KEY`` is redacted.
     """
     from app.gmail.client import DEFAULT_SCOPES
     from app.gmail.labeler import ERROR_LABEL, PROCESSED_LABEL, category_label_name
     from app.models.outputs import RouteCategory
 
     lines: list[str] = []
+
+    lines.append(f"OPENAI_API_KEY={redact_secret(settings.openai_api_key)}")
+    lines.append(f"ROUTER_MODEL={settings.router_model}")
+    lines.append(f"PROCESSOR_MODEL={settings.processor_model}")
+    lines.append(f"DAILY_DIGEST_MAX_QUALITY_GATE_ATTEMPTS={settings.max_quality_gate_attempts}")
+    lines.append("")
 
     n_senders = len(settings.newsletter_senders)
     lines.append(f"NEWSLETTER_SENDERS_COUNT={n_senders}")
@@ -96,30 +162,6 @@ def format_gmail_config_summary(settings: Settings) -> str:
         lines.append(f"  {scope}")
 
     return "\n".join(lines) + "\n"
-
-
-def load_settings() -> Settings:
-    db_default = Path.cwd() / "data" / "daily_digest.db"
-    raw_path = os.environ.get("DAILY_DIGEST_DB_PATH")
-    db_path = Path(raw_path).expanduser() if raw_path else db_default
-
-    return Settings(
-        db_path=db_path,
-        lock_name=os.environ.get("DAILY_DIGEST_LOCK_NAME", "daily_digest_agent"),
-        lock_ttl_minutes=_int_env("DAILY_DIGEST_LOCK_TTL_MINUTES", 60),
-        max_email_retries=_int_env("DAILY_DIGEST_MAX_EMAIL_RETRIES", 3),
-        newsletter_senders=_csv_env("NEWSLETTER_SENDERS"),
-        digest_recipient_email=os.environ.get("DIGEST_RECIPIENT_EMAIL") or None,
-        gmail_credentials_path=_path_env(
-            "GMAIL_CREDENTIALS_PATH",
-            Path.cwd() / "secrets" / "credentials.json",
-        ),
-        gmail_token_path=_path_env(
-            "GMAIL_TOKEN_PATH",
-            Path.cwd() / "secrets" / "token.json",
-        ),
-        gmail_lookback_days=_int_env("GMAIL_LOOKBACK_DAYS", 2),
-    )
 
 
 def build_run_lock(settings: Settings):

@@ -15,18 +15,19 @@ from app.main import main
 
 
 @pytest.fixture
-def minimal_settings(tmp_path: Path) -> Settings:
-    return Settings(
-        db_path=tmp_path / "db.sqlite",
-        lock_name="daily_digest_agent",
-        lock_ttl_minutes=60,
-        max_email_retries=3,
-        newsletter_senders=("a@news.example", "b@digest.example"),
-        digest_recipient_email="reader@example.com",
-        gmail_credentials_path=tmp_path / "credentials.json",
-        gmail_token_path=tmp_path / "token.json",
-        gmail_lookback_days=2,
-    )
+def minimal_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
+    monkeypatch.setenv("DAILY_DIGEST_DB_PATH", str(tmp_path / "db.sqlite"))
+    monkeypatch.setenv("DAILY_DIGEST_LOCK_NAME", "daily_digest_agent")
+    monkeypatch.setenv("DAILY_DIGEST_LOCK_TTL_MINUTES", "60")
+    monkeypatch.setenv("DAILY_DIGEST_MAX_EMAIL_RETRIES", "3")
+    monkeypatch.setenv("DAILY_DIGEST_MAX_QUALITY_GATE_ATTEMPTS", "3")
+    monkeypatch.setenv("NEWSLETTER_SENDERS", "a@news.example,b@digest.example")
+    monkeypatch.setenv("DIGEST_RECIPIENT_EMAIL", "reader@example.com")
+    monkeypatch.setenv("GMAIL_CREDENTIALS_PATH", str(tmp_path / "credentials.json"))
+    monkeypatch.setenv("GMAIL_TOKEN_PATH", str(tmp_path / "token.json"))
+    monkeypatch.setenv("GMAIL_LOOKBACK_DAYS", "2")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    return Settings()
 
 
 def test_format_gmail_config_summary_includes_allowed_fields(
@@ -34,6 +35,10 @@ def test_format_gmail_config_summary_includes_allowed_fields(
 ) -> None:
     out = format_gmail_config_summary(minimal_settings)
 
+    assert "OPENAI_API_KEY=(not set)" in out
+    assert "ROUTER_MODEL=gpt-4o-mini" in out
+    assert "PROCESSOR_MODEL=gpt-4o-mini" in out
+    assert "DAILY_DIGEST_MAX_QUALITY_GATE_ATTEMPTS=3" in out
     assert "NEWSLETTER_SENDERS_COUNT=2" in out
     assert "NEWSLETTER_SENDERS=a@news.example,b@digest.example" in out
     assert "DIGEST_RECIPIENT_EMAIL=reader@example.com" in out
@@ -50,6 +55,7 @@ def test_format_gmail_config_summary_includes_allowed_fields(
 
 def test_format_gmail_config_summary_does_not_read_credential_or_token_files(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client_secret = "LEAK_TEST_CLIENT_SECRET_88421"
     access = "LEAK_TEST_ACCESS_TOKEN_99211"
@@ -57,6 +63,17 @@ def test_format_gmail_config_summary_does_not_read_credential_or_token_files(
 
     cred_path = tmp_path / "credentials.json"
     token_path = tmp_path / "token.json"
+
+    monkeypatch.setenv("DAILY_DIGEST_DB_PATH", str(tmp_path / "db.sqlite"))
+    monkeypatch.setenv("DAILY_DIGEST_LOCK_NAME", "daily_digest_agent")
+    monkeypatch.setenv("DAILY_DIGEST_LOCK_TTL_MINUTES", "60")
+    monkeypatch.setenv("DAILY_DIGEST_MAX_EMAIL_RETRIES", "3")
+    monkeypatch.setenv("NEWSLETTER_SENDERS", "x@y.com")
+    monkeypatch.delenv("DIGEST_RECIPIENT_EMAIL", raising=False)
+    monkeypatch.setenv("GMAIL_CREDENTIALS_PATH", str(cred_path))
+    monkeypatch.setenv("GMAIL_TOKEN_PATH", str(token_path))
+    monkeypatch.setenv("GMAIL_LOOKBACK_DAYS", "2")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     cred_path.write_text(
         json.dumps(
@@ -80,17 +97,7 @@ def test_format_gmail_config_summary_does_not_read_credential_or_token_files(
         encoding="utf-8",
     )
 
-    settings = Settings(
-        db_path=tmp_path / "db.sqlite",
-        lock_name="daily_digest_agent",
-        lock_ttl_minutes=60,
-        max_email_retries=3,
-        newsletter_senders=("x@y.com",),
-        digest_recipient_email=None,
-        gmail_credentials_path=cred_path,
-        gmail_token_path=token_path,
-        gmail_lookback_days=2,
-    )
+    settings = Settings()
 
     # Open files and never read them in the formatter (regression guard).
     reader = mock.Mock(side_effect=AssertionError("credential/token files must not be read"))
@@ -120,6 +127,7 @@ def test_main_show_config_stdout_no_secrets_with_env_files(
         encoding="utf-8",
     )
 
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-ABSOLUTE_SECRET_KEY_MATERIAL_XYZ")
     monkeypatch.setenv("NEWSLETTER_SENDERS", "n1@e.com")
     monkeypatch.setenv("DIGEST_RECIPIENT_EMAIL", "recv@e.com")
     monkeypatch.setenv("GMAIL_CREDENTIALS_PATH", str(cred))
@@ -133,6 +141,8 @@ def test_main_show_config_stdout_no_secrets_with_env_files(
     assert code == 0
 
     out = buf.getvalue()
+    assert "ABSOLUTE_SECRET_KEY_MATERIAL" not in out
+    assert "sk-proj-******" in out
     assert secret_marker not in out
     assert tok_marker not in out
     assert "SHOW_CONFIG_RT_5511" not in out
@@ -157,6 +167,7 @@ def test_main_show_config_subprocess_no_secrets(
 
     project_root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
+    env["OPENAI_API_KEY"] = ""
     env["GMAIL_CREDENTIALS_PATH"] = str(cred)
     env["GMAIL_TOKEN_PATH"] = str(tok)
     env["NEWSLETTER_SENDERS"] = "ping@example.com"
@@ -180,28 +191,26 @@ def test_main_show_config_subprocess_no_secrets(
     assert "NEWSLETTER_SENDERS=ping@example.com" in out
 
 
-def test_format_gmail_config_summary_sender_count_when_empty(tmp_path: Path) -> None:
-    settings = Settings(
-        db_path=tmp_path / "db.sqlite",
-        lock_name="daily_digest_agent",
-        lock_ttl_minutes=60,
-        max_email_retries=3,
-        newsletter_senders=(),
-    )
+def test_format_gmail_config_summary_sender_count_when_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DAILY_DIGEST_DB_PATH", str(tmp_path / "db.sqlite"))
+    monkeypatch.setenv("NEWSLETTER_SENDERS", "")
+    settings = Settings()
     out = format_gmail_config_summary(settings)
     assert "NEWSLETTER_SENDERS_COUNT=0" in out
     assert "NEWSLETTER_SENDERS=(none)" in out
 
 
-def test_build_gmail_client_forwards_paths_from_settings(tmp_path: Path) -> None:
-    s = Settings(
-        db_path=tmp_path / "d.db",
-        lock_name="daily_digest_agent",
-        lock_ttl_minutes=60,
-        max_email_retries=3,
-        gmail_credentials_path=tmp_path / "g1.json",
-        gmail_token_path=tmp_path / "g2.json",
-    )
+def test_build_gmail_client_forwards_paths_from_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DAILY_DIGEST_DB_PATH", str(tmp_path / "d.db"))
+    monkeypatch.setenv("GMAIL_CREDENTIALS_PATH", str(tmp_path / "g1.json"))
+    monkeypatch.setenv("GMAIL_TOKEN_PATH", str(tmp_path / "g2.json"))
+    s = Settings()
     with mock.patch("app.gmail.client.GmailClient") as ctor:
         client = build_gmail_client(s)
 

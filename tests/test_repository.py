@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
+
 import pytest
 
 from app.models.email import EmailInput
@@ -133,3 +135,44 @@ def test_update_digest_body(repo: StateRepository) -> None:
         (did,),
     ).fetchone()
     assert row["body_html"] == "<p>x</p>"
+
+
+def test_fetch_latest_digest_for_utc_calendar_day_latest_row(repo: StateRepository) -> None:
+    day = date(2026, 5, 10)
+    t1 = datetime(2026, 5, 10, 10, 0, 0, tzinfo=timezone.utc).isoformat()
+    t2 = datetime(2026, 5, 10, 20, 0, 0, tzinfo=timezone.utc).isoformat()
+    conn = repo.connection
+    conn.execute(
+        """
+        INSERT INTO digests (status, title, body_html, created_at, updated_at)
+        VALUES ('draft', NULL, ?, ?, ?)
+        """,
+        ("<p>early</p>", t1, t1),
+    )
+    conn.execute(
+        """
+        INSERT INTO digests (status, title, body_html, created_at, updated_at)
+        VALUES ('draft', NULL, ?, ?, ?)
+        """,
+        ("<p>late</p>", t2, t2),
+    )
+    conn.commit()
+
+    got = repo.fetch_latest_digest_for_utc_calendar_day(day)
+    assert got is not None
+    assert got.body_html == "<p>late</p>"
+
+
+def test_fetch_latest_digest_for_utc_calendar_day_other_day_excluded(repo: StateRepository) -> None:
+    d_may10 = date(2026, 5, 10)
+    t_may11 = datetime(2026, 5, 11, 8, 0, 0, tzinfo=timezone.utc).isoformat()
+    conn = repo.connection
+    conn.execute(
+        """
+        INSERT INTO digests (status, title, body_html, created_at, updated_at)
+        VALUES ('draft', NULL, '<p>x</p>', ?, ?)
+        """,
+        (t_may11, t_may11),
+    )
+    conn.commit()
+    assert repo.fetch_latest_digest_for_utc_calendar_day(d_may10) is None

@@ -1,37 +1,28 @@
 from __future__ import annotations
 
-import os
-
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from app.llm.client import LLMClient
 
-load_dotenv()
-
 
 class OpenAIProvider(LLMClient):
-    """OpenAI Chat Completions with JSON object mode; models from env or constructor."""
+    """OpenAI Chat Completions with JSON object mode; keys and models come from Settings."""
 
     def __init__(
         self,
         *,
         client: OpenAI | None = None,
         api_key: str | None = None,
-        router_model: str | None = None,
-        processor_model: str | None = None,
+        router_model: str = "gpt-4o-mini",
+        processor_model: str = "gpt-4o-mini",
     ) -> None:
-        key = api_key if api_key is not None else os.environ.get("OPENAI_API_KEY")
         if client is None:
-            if not key:
-                raise ValueError("OPENAI_API_KEY is required unless an OpenAI client is injected")
-            client = OpenAI(api_key=key)
+            if not api_key:
+                raise ValueError("api_key is required unless an OpenAI client is injected")
+            client = OpenAI(api_key=api_key)
         self._client = client
-        self.router_model = router_model or os.environ.get("ROUTER_MODEL", "gpt-4o-mini")
-        self.processor_model = processor_model or os.environ.get(
-            "PROCESSOR_MODEL",
-            "gpt-4o-mini",
-        )
+        self.router_model = router_model
+        self.processor_model = processor_model
 
     def _completion_json(self, *, system_prompt: str, user_message: str, model: str) -> str:
         resp = self._client.chat.completions.create(

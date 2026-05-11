@@ -17,6 +17,10 @@ def _isolated_env(monkeypatch):
         "GMAIL_TOKEN_PATH",
         "GMAIL_LOOKBACK_DAYS",
         "DAILY_DIGEST_DB_PATH",
+        "OPENAI_API_KEY",
+        "ROUTER_MODEL",
+        "PROCESSOR_MODEL",
+        "DAILY_DIGEST_MAX_QUALITY_GATE_ATTEMPTS",
     ):
         monkeypatch.delenv(key, raising=False)
     yield
@@ -29,6 +33,8 @@ def test_load_settings_defaults_for_gmail() -> None:
     assert settings.gmail_lookback_days == 2
     assert settings.gmail_credentials_path.name == "credentials.json"
     assert settings.gmail_token_path.name == "token.json"
+    assert settings.max_quality_gate_attempts == 3
+    assert settings.openai_api_key is None
 
 
 def test_load_settings_parses_csv_senders(monkeypatch) -> None:
