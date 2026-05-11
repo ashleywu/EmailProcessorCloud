@@ -31,7 +31,7 @@ def test_save_agent_output_roundtrip_json(repo: StateRepository) -> None:
     oid = repo.save_agent_output(
         eid,
         "router_decision",
-        RouterDecision(route=RouteCategory.TECHNOLOGY, confidence=0.8),
+        RouterDecision(category=RouteCategory.TECHNOLOGY, confidence=0.8),
     )
     assert oid >= 1
     row = repo.connection.execute(
@@ -40,7 +40,7 @@ def test_save_agent_output_roundtrip_json(repo: StateRepository) -> None:
     ).fetchone()
     assert row is not None
     restored = RouterDecision.model_validate_json(row["payload"])
-    assert restored.route == RouteCategory.TECHNOLOGY
+    assert restored.category == RouteCategory.TECHNOLOGY
 
 
 def test_digest_attach_and_status(repo: StateRepository) -> None:
@@ -84,5 +84,5 @@ def test_technology_output_saved(repo: StateRepository) -> None:
     repo.save_agent_output(
         eid,
         "technology",
-        TechnologyOutput(summary="sum", key_points=["a"]),
+        TechnologyOutput(core_pain_point="sum"),
     )

@@ -26,32 +26,68 @@ def test_email_input_rejects_empty_message_id() -> None:
 
 
 def test_router_decision_confidence_bounds() -> None:
-    RouterDecision(route=RouteCategory.TECHNOLOGY, confidence=0.5)
+    RouterDecision(category=RouteCategory.TECHNOLOGY, confidence=0.5)
     with pytest.raises(ValidationError):
-        RouterDecision(route=RouteCategory.NOISE, confidence=1.5)
+        RouterDecision(category=RouteCategory.NOISE, confidence=1.5)
 
 
-def test_technology_output_nested_diagram() -> None:
+def test_technology_output_diagrams_and_images() -> None:
     out = TechnologyOutput(
-        summary="S",
-        key_points=["a"],
-        diagram=Diagram(title="D", diagram_type="mermaid", content="graph TD;A-->B"),
+        core_pain_point="Short pain point text",
+        diagrams=[Diagram(title="D", diagram_type="mermaid", content="graph TD;A-->B")],
+        selected_image_urls=[],
     )
-    assert out.diagram is not None
-    assert out.diagram.diagram_type == "mermaid"
+    assert out.diagrams[0].diagram_type == "mermaid"
+
+
+def test_technology_selected_urls_must_match_candidates() -> None:
+    TechnologyOutput.model_validate(
+        {
+            "core_pain_point": "x",
+            "selected_image_urls": ["https://ok.example/a.png"],
+        },
+        context={"allowed_image_urls": ["https://ok.example/a.png"]},
+    )
+    with pytest.raises(ValidationError):
+        TechnologyOutput.model_validate(
+            {
+                "core_pain_point": "x",
+                "selected_image_urls": ["https://evil.example/b.png"],
+            },
+            context={"allowed_image_urls": ["https://ok.example/a.png"]},
+        )
 
 
 def test_radar_and_leadership_outputs() -> None:
-    RadarOutput(items=[RadarItem(title="t", url="https://x.example", note=None)])
+    RadarOutput(
+        items=[
+            RadarItem(
+                entity="Acme",
+                impact_or_action="Shipped API v2.",
+                url="https://x.example",
+            ),
+        ],
+    )
     LeadershipOutput(
-        signals=[LeadershipSignal(theme="trust", insight="x")],
+        signals=[
+            LeadershipSignal(
+                theme="trust",
+                insight="Clear expectations reduce thrash.",
+                actionable_item="Add a 10m agenda template to recurring 1:1s.",
+            ),
+        ],
         summary="s",
     )
 
 
 def test_noise_output_defaults() -> None:
-    n = NoiseOutput(reason="low signal")
+    n = NoiseOutput(reason="low signal newsletter with no facts")
     assert n.discard is True
+
+
+def test_noise_rejects_multiline_reason() -> None:
+    with pytest.raises(ValidationError):
+        NoiseOutput(reason="line1\nline2")
 
 
 def test_processed_email_digest_optional() -> None:
@@ -64,7 +100,7 @@ def test_processed_email_digest_optional() -> None:
 
 
 def test_models_json_roundtrip() -> None:
-    rd = RouterDecision(route=RouteCategory.RADAR, confidence=0.9, rationale=None)
+    rd = RouterDecision(category=RouteCategory.RADAR, confidence=0.9, rationale=None)
     assert RouterDecision.model_validate_json(rd.model_dump_json()) == rd
 
     ts = datetime.now(timezone.utc)
