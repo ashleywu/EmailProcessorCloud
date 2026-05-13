@@ -29,9 +29,11 @@ class GmailMessage:
     label_ids: tuple[str, ...] = field(default_factory=tuple)
 
     def to_email_input(self) -> EmailInput:
+        raw_from = (self.sender or "").strip()
         return EmailInput(
             message_id=self.message_id,
             subject=self.subject,
+            sender=raw_from or None,
             body_preview=self.snippet,
             received_at=self.received_at,
         )

@@ -92,6 +92,7 @@ def test_to_email_input_roundtrip() -> None:
     ei = parse_gmail_message(payload).to_email_input()
     assert ei.message_id == "m3"
     assert ei.subject == "Hi"
+    assert ei.sender == "news@example.com"
     assert ei.body_preview == "preview"
     assert ei.received_at is not None
 

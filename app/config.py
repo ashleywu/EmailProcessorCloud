@@ -8,6 +8,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dotenv import load_dotenv
 
+# Always load `.env` from the project root so `python -m app.main ...` works even when cwd is elsewhere.
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
 
 def redact_secret(value: str | None) -> str:
     """Mask API keys and similar secrets for safe terminal output (e.g. ``show-config``)."""
@@ -103,7 +106,7 @@ class Settings(BaseSettings):
 def load_settings() -> Settings:
     """Load settings from environment variables and optional ``.env`` (via python-dotenv)."""
 
-    load_dotenv()
+    load_dotenv(_ENV_FILE)
     return Settings()
 
 
@@ -128,8 +131,7 @@ def format_gmail_config_summary(settings: Settings) -> str:
     ``OPENAI_API_KEY`` is redacted.
     """
     from app.gmail.client import DEFAULT_SCOPES
-    from app.gmail.labeler import ERROR_LABEL, PROCESSED_LABEL, category_label_name
-    from app.models.outputs import RouteCategory
+    from app.gmail.labeler import ERROR_LABEL, PROCESSED_LABEL
 
     lines: list[str] = []
 
@@ -154,8 +156,10 @@ def format_gmail_config_summary(settings: Settings) -> str:
     lines.append("gmail_pipeline_labels:")
     lines.append(f"  {PROCESSED_LABEL}")
     lines.append(f"  {ERROR_LABEL}")
-    for cat in RouteCategory:
-        lines.append(f"  {category_label_name(cat)}")
+    lines.append(
+        "(Category labels AI_DIGEST/TECHNOLOGY etc. are not applied; "
+        "use only PROCESSED + archive.)",
+    )
 
     lines.append("oauth_scopes:")
     for scope in DEFAULT_SCOPES:

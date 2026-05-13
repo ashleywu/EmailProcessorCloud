@@ -47,8 +47,7 @@ def test_format_gmail_config_summary_includes_allowed_fields(
     assert "GMAIL_LOOKBACK_DAYS=2" in out
     assert "AI_DIGEST_PROCESSED" in out
     assert "AI_DIGEST_ERROR" in out
-    assert "AI_DIGEST/TECHNOLOGY" in out
-    assert "AI_DIGEST/RADAR" in out
+    assert "Category labels" in out
     assert "https://www.googleapis.com/auth/gmail.modify" in out
     assert "https://www.googleapis.com/auth/gmail.send" in out
 

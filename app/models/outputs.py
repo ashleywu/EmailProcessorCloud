@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
 class RouteCategory(StrEnum):
@@ -33,10 +33,33 @@ class Diagram(BaseModel):
     content: str
 
 
+class TechnologyStory(BaseModel):
+    """One article or major section inside a technology newsletter (e.g. multi-story digests)."""
+
+    title: str = Field(..., max_length=500)
+    article_url: str = Field(..., description="Must be copied verbatim from candidate article URLs in the prompt.")
+    summary: str = Field(
+        ...,
+        max_length=1000,
+        description="Up to ~1000 characters: substantive summary with concrete detail (not one sentence).",
+    )
+
+
 class TechnologyOutput(BaseModel):
-    core_pain_point: str = Field(..., max_length=240)
+    """Technology / systems newsletter extraction."""
+
+    stories: list[TechnologyStory] = Field(default_factory=list)
+    core_pain_point: str | None = Field(
+        default=None,
+        max_length=240,
+        description="Legacy single-blurb mode; prefer ``stories`` when the email has one or more articles.",
+    )
     diagrams: list[Diagram] = Field(default_factory=list)
     selected_image_urls: list[str] = Field(default_factory=list)
+    digest_source_url: str | None = Field(
+        default=None,
+        description="Canonical / view-online URL from parsed HTML; set by the processor for digest fallback.",
+    )
 
     @field_validator("selected_image_urls")
     @classmethod
@@ -55,6 +78,31 @@ class TechnologyOutput(BaseModel):
             )
         return v
 
+    @field_validator("stories", mode="after")
+    @classmethod
+    def _story_urls_in_allowlist(cls, v: list[TechnologyStory], info: ValidationInfo) -> list[TechnologyStory]:
+        ctx = info.context
+        if not ctx or not v:
+            return v
+        allowed = ctx.get("allowed_article_urls")
+        if allowed is None:
+            return v
+        allow = set(allowed)
+        for s in v:
+            if s.article_url not in allow:
+                raise ValueError(
+                    "story article_url must appear in the candidate article URL list from the user message",
+                )
+        return v
+
+    @model_validator(mode="after")
+    def _stories_or_legacy_blurb(self) -> TechnologyOutput:
+        if self.stories:
+            return self
+        if self.core_pain_point and str(self.core_pain_point).strip():
+            return self
+        raise ValueError("Provide at least one story in ``stories``, or set legacy ``core_pain_point``.")
+
 
 class RadarItem(BaseModel):
     entity: str
@@ -71,6 +119,10 @@ class LeadershipSignal(BaseModel):
     theme: str
     insight: str
     actionable_item: str
+    link: str | None = Field(
+        default=None,
+        description="URL when the signal refers to a course, product, or article (copy from email links).",
+    )
 
 
 class LeadershipOutput(BaseModel):

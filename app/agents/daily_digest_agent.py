@@ -98,9 +98,10 @@ class DailyDigestAgent:
             email_ids = [lid[0] for lid in success_links]
             rows = self._repo.get_outputs_by_email_ids(email_ids)
             subjects = {eid: self._repo.get_email_subject_by_id(eid) for eid in email_ids}
+            senders = {eid: self._repo.get_email_sender_by_id(eid) for eid in email_ids}
 
             try:
-                html = self._compose_with_quality_gate(rows, subjects)
+                html = self._compose_with_quality_gate(rows, subjects, senders)
             except QualityGateFailedException as exc:
                 self._repo.update_digest_body(digest_id, body_html=exc.last_html)
                 self._repo.update_digest_status(
@@ -128,7 +129,6 @@ class DailyDigestAgent:
 
             self._repo.update_digest_status(digest_id, DIGEST_STATUS_SENT)
             for email_id, message_id, category in success_links:
-                self._labeler.add_category(message_id, category)
                 self._labeler.mark_processed(message_id)
                 self._labeler.archive(message_id)
                 self._repo.update_email_status(email_id, "archived")
@@ -192,8 +192,8 @@ class DailyDigestAgent:
             )
             return None
 
-    def _compose_with_quality_gate(self, rows, subjects):
-        html = self._composer.compose(rows, subjects, revision_problems=())
+    def _compose_with_quality_gate(self, rows, subjects, senders):
+        html = self._composer.compose(rows, subjects, senders=senders, revision_problems=())
         max_attempts = self._max_quality_gate_attempts
         for attempt in range(max_attempts):
             result = self._quality_gate.check(html)
@@ -202,4 +202,4 @@ class DailyDigestAgent:
             problems = list(result.problems)
             if attempt >= max_attempts - 1:
                 raise QualityGateFailedException(problems, last_html=html)
-            html = self._composer.compose(rows, subjects, revision_problems=problems)
+            html = self._composer.compose(rows, subjects, senders=senders, revision_problems=problems)

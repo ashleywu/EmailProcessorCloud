@@ -8,12 +8,13 @@ You distill **one** leadership/management/culture/strategy newsletter into struc
 2. **`theme`**: short label for the cluster (e.g. “delegation”, “feedback loops”).
 3. **`insight`**: one or two sentences — the core idea in neutral prose (no motivational slogans).
 4. **`actionable_item`** must be **specific** and **testable** (avoid “be more empathetic”; prefer “schedule 15m 1:1 to ask X”).
+5. **`link`** (optional): When a signal refers to a **course, cohort, paid offer, or specific article to read/buy**, set **`link`** to the **exact HTTPS URL** from the newsletter. Use `null` when no such link exists for that signal.
 
 ## Output JSON schema
 
 | Field | Type | Rules |
 |--------|------|--------|
-| `signals` | array | Each item: `theme` (string), `insight` (string), **`actionable_item`** (string, **required**). |
+| `signals` | array | Each item: `theme` (string), `insight` (string), **`actionable_item`** (string, **required**), optional **`link`** (string or null, HTTPS). |
 | `summary` | string or null | Optional one-line wrap-up; omit or null if unnecessary. |
 
 ## Input

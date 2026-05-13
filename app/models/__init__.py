@@ -11,6 +11,7 @@ from app.models.outputs import (
     RouterDecision,
     RouteCategory,
     TechnologyOutput,
+    TechnologyStory,
 )
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "RouteCategory",
     "RouterDecision",
     "TechnologyOutput",
+    "TechnologyStory",
 ]

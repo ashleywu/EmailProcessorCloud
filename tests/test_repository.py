@@ -28,6 +28,19 @@ def test_upsert_and_unprocessed(repo: StateRepository) -> None:
     assert pending[0].status == "pending"
 
 
+def test_upsert_stores_sender(repo: StateRepository) -> None:
+    eid = repo.upsert_email(
+        EmailInput(
+            message_id="with-from",
+            subject="S",
+            sender="Newsletter <news@example.org>",
+        ),
+    )
+    assert repo.get_email_sender_by_id(eid) == "Newsletter <news@example.org>"
+    repo.upsert_email(EmailInput(message_id="with-from", subject="S", sender=None))
+    assert repo.get_email_sender_by_id(eid) is None
+
+
 def test_save_agent_output_roundtrip_json(repo: StateRepository) -> None:
     eid = repo.upsert_email(EmailInput(message_id="m-out"))
     oid = repo.save_agent_output(
@@ -79,6 +92,34 @@ def test_upsert_updates_existing(repo: StateRepository) -> None:
         (id1,),
     ).fetchone()
     assert row["subject"] == "B"
+
+
+def test_upsert_from_fetch_resets_archived_and_failed_to_pending(repo: StateRepository) -> None:
+    eid = repo.upsert_email(EmailInput(message_id="requeue", subject="S"))
+    repo.update_email_status(eid, "archived")
+    repo.upsert_email(EmailInput(message_id="requeue", subject="S"))
+    row = repo.connection.execute(
+        "SELECT status, error_message, retry_count FROM emails WHERE id = ?",
+        (eid,),
+    ).fetchone()
+    assert row["status"] == "pending"
+    assert row["error_message"] is None
+    assert row["retry_count"] == 0
+
+    repo.update_email_status(
+        eid,
+        "failed",
+        error_message="old",
+        increment_retry=True,
+    )
+    repo.upsert_email(EmailInput(message_id="requeue", subject="S2"))
+    row2 = repo.connection.execute(
+        "SELECT status, error_message, retry_count FROM emails WHERE id = ?",
+        (eid,),
+    ).fetchone()
+    assert row2["status"] == "pending"
+    assert row2["error_message"] is None
+    assert row2["retry_count"] == 0
 
 
 def test_technology_output_saved(repo: StateRepository) -> None:

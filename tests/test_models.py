@@ -25,6 +25,11 @@ def test_email_input_rejects_empty_message_id() -> None:
         EmailInput(message_id="")
 
 
+def test_email_input_accepts_sender() -> None:
+    e = EmailInput(message_id="m1", sender="Bob <bob@example.com>")
+    assert e.sender == "Bob <bob@example.com>"
+
+
 def test_router_decision_confidence_bounds() -> None:
     RouterDecision(category=RouteCategory.TECHNOLOGY, confidence=0.5)
     with pytest.raises(ValidationError):
@@ -74,6 +79,7 @@ def test_radar_and_leadership_outputs() -> None:
                 theme="trust",
                 insight="Clear expectations reduce thrash.",
                 actionable_item="Add a 10m agenda template to recurring 1:1s.",
+                link="https://training.example/start",
             ),
         ],
         summary="s",

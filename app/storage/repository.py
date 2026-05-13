@@ -64,19 +64,30 @@ class StateRepository:
         init_schema(self._conn)
 
     def upsert_email(self, email: EmailInput) -> int:
+        """Insert or update a row from Gmail fetch.
+
+        On conflict, reset ``status`` to ``pending`` and clear error fields so a
+        message can be re-queued when it shows up in ``fetch_recent`` again
+        (e.g. user removed ``AI_DIGEST_PROCESSED`` and returned the mail to the inbox).
+        """
+
         now = _utc_now_iso()
         received = email.received_at.isoformat() if email.received_at else None
         self._conn.execute(
             """
-            INSERT INTO emails (message_id, subject, body_preview, status, received_at, created_at, updated_at)
-            VALUES (?, ?, ?, 'pending', ?, ?, ?)
+            INSERT INTO emails (message_id, subject, sender, body_preview, status, received_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
             ON CONFLICT(message_id) DO UPDATE SET
               subject = excluded.subject,
+              sender = excluded.sender,
               body_preview = excluded.body_preview,
               received_at = COALESCE(excluded.received_at, emails.received_at),
+              status = 'pending',
+              error_message = NULL,
+              retry_count = 0,
               updated_at = excluded.updated_at
             """,
-            (email.message_id, email.subject, email.body_preview, received, now, now),
+            (email.message_id, email.subject, email.sender, email.body_preview, received, now, now),
         )
         self._conn.commit()
         row = self._conn.execute(
@@ -269,6 +280,19 @@ class StateRepository:
         if row is None:
             return None
         return row["subject"]
+
+    def get_email_sender_by_id(self, email_id: int) -> str | None:
+        row = self._conn.execute(
+            "SELECT sender FROM emails WHERE id = ?",
+            (email_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        v = row["sender"]
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
 
     def fetch_unprocessed_emails(self) -> list[ProcessedEmail]:
         rows = self._conn.execute(

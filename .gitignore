@@ -4,6 +4,18 @@ daily_knowledge_digest.egg-info/
 .env
 .env.local
 
+# OAuth client JSON + token cache (any location — common mistakes at repo root)
+credentials.json
+token.json
+secrets/
+
+# Local SQLite DB may contain subject lines, From addresses, message IDs
+data/*.db
+data/**/*.db
+
+# Scheduler / local logs
+logs/
+
 # Python
 __pycache__/
 *.py[cod]

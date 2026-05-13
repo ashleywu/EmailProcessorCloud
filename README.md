@@ -42,6 +42,30 @@ python -m app.main preview-digest --date YYYY-MM-DD -o preview.html
 - **`preview-digest`**: Read-only: prints the latest digest HTML for the given **UTC** calendar day from SQLite. Does **not** send mail or call Gmail. Details for missing rows or empty HTML are in `--help`; failures use stderr and a non-zero exit code.
 - **`show-config`**: Safe summary for Cron/cloud debugging; secrets are masked.
 
+## Scheduled daily run (Windows)
+
+To run **`run-daily` automatically every day at 3:00 PM local time** without opening a terminal:
+
+1. Install the app and Gmail extras in a **`.venv`** under this repo (recommended): `pip install -e ".[dev,gmail]"`.
+2. Ensure **`.env`** and Gmail **`credentials.json` / `token.json`** paths work when the repo folder is the working directory (defaults use `Path.cwd()` unless you set absolute paths in `.env`).
+3. In **PowerShell**, from the repo root, register the task (one-time):
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\register-daily-task.ps1
+   ```
+
+   Default is **15:00** local time. Override: `.\scripts\register-daily-task.ps1 -DailyAt "15:00"`.
+
+4. Logs append under **`logs/run-daily-YYYY-MM.log`**.
+
+Remove the task later: **Task Scheduler** → **Task Scheduler Library** → **DailyKnowledgeDigest** → **Delete**, or:
+
+```powershell
+Unregister-ScheduledTask -TaskName DailyKnowledgeDigest -Confirm:$false
+```
+
+The task runs **in your Windows user context** (typical when creating tasks without “run whether user is logged on”). If you need it while logged off, configure **Run whether user is logged on or not** and stored credentials in Task Scheduler.
+
 ## Tests
 
 ```bash

@@ -38,12 +38,16 @@ def test_router_decision_schema_from_json() -> None:
 
 def test_technology_schema_from_json_with_context() -> None:
     payload = (
-        '{"core_pain_point": "latency", "diagrams": [], '
+        '{"stories": [{"title": "t", "article_url": "https://post.example/p", '
+        '"summary": "s"}], "core_pain_point": null, "diagrams": [], '
         '"selected_image_urls": ["https://cdn.example/x.png"]}'
     )
     TechnologyOutput.model_validate_json(
         payload,
-        context={"allowed_image_urls": ["https://cdn.example/x.png"]},
+        context={
+            "allowed_image_urls": ["https://cdn.example/x.png"],
+            "allowed_article_urls": ["https://post.example/p"],
+        },
     )
 
 
@@ -86,14 +90,15 @@ def test_router_agent_invokes_model_name() -> None:
 def test_technology_agent_passes_image_url_context() -> None:
     llm = ScriptedLLMClient(
         [
-            '{"core_pain_point": "p", "diagrams": [], '
+            '{"stories": [{"title": "Post", "article_url": "https://post.example/a", '
+            '"summary": "Details here."}], "core_pain_point": null, "diagrams": [], '
             '"selected_image_urls": ["https://allow.example/a.png"]}',
         ],
     )
     parsed = ParsedHtmlResult(
         plain_text="t",
         plain_text_chars=1,
-        links=[],
+        links=["https://post.example/a"],
         image_urls=["https://allow.example/a.png"],
         original_url=None,
     )
@@ -105,7 +110,7 @@ def test_technology_agent_passes_image_url_context() -> None:
 def test_leadership_and_noise_agents_roundtrip() -> None:
     llm_l = ScriptedLLMClient(
         [
-            '{"signals":[{"theme":"t","insight":"i","actionable_item":"Do X"}],'
+            '{"signals":[{"theme":"t","insight":"i","actionable_item":"Do X","link":"https://course.example/c"}],'
             '"summary":null}',
         ],
     )

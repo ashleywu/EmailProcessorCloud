@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS emails (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   message_id TEXT NOT NULL UNIQUE,
   subject TEXT,
+  sender TEXT,
   body_preview TEXT,
   status TEXT NOT NULL,
   retry_count INTEGER NOT NULL DEFAULT 0,
@@ -66,6 +67,17 @@ CREATE TABLE IF NOT EXISTS run_locks (
 """
 
 
+def _migrate_emails_sender_column(conn: sqlite3.Connection) -> None:
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='emails'",
+    )
+    if cur.fetchone() is None:
+        return
+    col_names = {str(row[1]) for row in conn.execute("PRAGMA table_info(emails)").fetchall()}
+    if "sender" not in col_names:
+        conn.execute("ALTER TABLE emails ADD COLUMN sender TEXT")
+
+
 def _migrate_legacy_digest_columns(conn: sqlite3.Connection) -> None:
     cur = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='digests'",
@@ -87,6 +99,7 @@ def _migrate_legacy_digest_columns(conn: sqlite3.Connection) -> None:
 
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
+    _migrate_emails_sender_column(conn)
     _migrate_legacy_digest_columns(conn)
     conn.commit()
 

@@ -84,7 +84,9 @@ def test_digest_sent_archives_and_links_emails(tmp_path) -> None:
     llm = ScriptedLLMClient(
         [
             '{"category": "TECHNOLOGY", "confidence": 0.9, "rationale": null}',
-            '{"core_pain_point": "Pain summary text here.", "diagrams": [], "selected_image_urls": []}',
+            '{"stories": [{"title": "T", "article_url": "https://example.com/post", '
+            '"summary": "Pain summary text here with enough detail for the digest."}], '
+            '"core_pain_point": null, "diagrams": [], "selected_image_urls": []}',
         ],
     )
     _agent(repo, RunLock(db), svc, llm).run_daily()
@@ -118,7 +120,8 @@ def test_single_email_failure_does_not_block_others(tmp_path) -> None:
     llm = ScriptedLLMClient(
         [
             '{"category": "TECHNOLOGY", "confidence": 0.9, "rationale": null}',
-            '{"core_pain_point": "P", "diagrams": [], "selected_image_urls": []}',
+            '{"stories": [{"title": "P", "article_url": "https://example.com/p", '
+            '"summary": "Summary."}], "core_pain_point": null, "diagrams": [], "selected_image_urls": []}',
         ],
     )
     _agent(repo, RunLock(db), svc, llm).run_daily()

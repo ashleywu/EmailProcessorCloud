@@ -19,6 +19,14 @@ from app.models.outputs import (
 from app.storage.repository import AgentOutputRecord
 
 
+def _sender_label(senders: Mapping[int, str | None], email_id: int) -> str | None:
+    raw = senders.get(email_id)
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    return s or None
+
+
 def _repair_html(html: str, problems: Sequence[str]) -> str:
     """Apply deterministic fixes suggested by quality-gate problem codes."""
 
@@ -70,10 +78,12 @@ class DigestComposer:
         output_rows: Sequence[AgentOutputRecord],
         subjects: Mapping[int, str | None],
         *,
+        senders: Mapping[int, str | None] | None = None,
         revision_problems: Sequence[str] = (),
     ) -> str:
         """Build HTML; when ``revision_problems`` is non-empty, repair the prior render."""
 
+        snd = senders or {}
         by_email: dict[int, dict[str, str]] = defaultdict(dict)
         for row in output_rows:
             by_email[row.email_id][row.kind] = row.payload
@@ -88,27 +98,51 @@ class DigestComposer:
                 continue
             decision = RouterDecision.model_validate_json(kinds["router"])
             subject = subjects.get(eid)
+            from_line = _sender_label(snd, eid)
             cat = decision.category
             if cat == RouteCategory.TECHNOLOGY and "technology" in kinds:
                 m = TechnologyOutput.model_validate_json(kinds["technology"])
-                technical_index.append(
-                    {
-                        "subject": subject or f"Email #{eid}",
-                        "core_pain_point": m.core_pain_point,
-                        "image_urls": list(m.selected_image_urls),
-                    },
-                )
+                src = subject or f"Email #{eid}"
+                stories_out: list[dict[str, Any]] = []
+                for s in m.stories:
+                    fb = (
+                        m.digest_source_url
+                        if m.digest_source_url and m.digest_source_url != s.article_url
+                        else None
+                    )
+                    stories_out.append(
+                        {
+                            "title": s.title,
+                            "article_url": s.article_url,
+                            "summary": s.summary,
+                            "source_subject": src,
+                            "source_sender": from_line,
+                            "newsletter_original_url": fb,
+                        },
+                    )
+                row = {
+                    "subject": src,
+                    "source_sender": from_line,
+                    "digest_source_url": m.digest_source_url,
+                    "stories": stories_out,
+                    "core_pain_point": m.core_pain_point,
+                }
+                technical_index.append(row)
             elif cat == RouteCategory.RADAR and "radar" in kinds:
                 m = RadarOutput.model_validate_json(kinds["radar"])
+                src = subject or f"Email #{eid}"
                 ai_radar.append(
                     {
-                        "subject": subject or f"Email #{eid}",
+                        "subject": src,
+                        "source_sender": from_line,
                         "summary": m.summary,
                         "items": [
                             {
                                 "entity": it.entity,
                                 "impact_or_action": it.impact_or_action,
                                 "url": it.url,
+                                "source_subject": src,
+                                "source_sender": from_line,
                             }
                             for it in m.items
                         ],
@@ -116,15 +150,20 @@ class DigestComposer:
                 )
             elif cat == RouteCategory.LEADERSHIP and "leadership" in kinds:
                 m = LeadershipOutput.model_validate_json(kinds["leadership"])
+                src = subject or f"Email #{eid}"
                 leadership_signals.append(
                     {
-                        "subject": subject or f"Email #{eid}",
+                        "subject": src,
+                        "source_sender": from_line,
                         "summary": m.summary,
                         "signals": [
                             {
                                 "theme": s.theme,
                                 "insight": s.insight,
                                 "actionable_item": s.actionable_item,
+                                "link": s.link,
+                                "source_subject": src,
+                                "source_sender": from_line,
                             }
                             for s in m.signals
                         ],
@@ -132,9 +171,12 @@ class DigestComposer:
                 )
             elif cat == RouteCategory.NOISE and "noise" in kinds:
                 m = NoiseOutput.model_validate_json(kinds["noise"])
+                src = subject or f"Email #{eid}"
                 filtered_noise.append(
                     {
-                        "subject": subject or f"Email #{eid}",
+                        "subject": src,
+                        "source_subject": src,
+                        "source_sender": from_line,
                         "reason": m.reason,
                     },
                 )

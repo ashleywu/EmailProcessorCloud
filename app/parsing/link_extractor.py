@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from urllib.parse import parse_qsl, urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
@@ -185,6 +186,34 @@ def strip_tracking_noise_from_plain_url_line(url_text: str) -> str | None:
     if noisy >= len(pairs):
         return None
     return url_text
+
+
+_IMAGE_PATH_SUFFIXES = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".ico",
+    ".avif",
+)
+
+
+def is_likely_image_asset_url(url: str) -> bool:
+    """Best-effort: treat obvious static image paths as non-article links."""
+
+    try:
+        path = urlparse(url).path.lower()
+    except ValueError:
+        return False
+    return any(path.endswith(suffix) for suffix in _IMAGE_PATH_SUFFIXES)
+
+
+def article_link_candidates(links: Sequence[str]) -> list[str]:
+    """Article / post URLs from ``collect_article_links_ordered``, minus image-like paths."""
+
+    return [u for u in links if not is_likely_image_asset_url(u)]
 
 
 def collect_article_links_ordered(soup: BeautifulSoup, *, base_fallback: str) -> list[str]:
