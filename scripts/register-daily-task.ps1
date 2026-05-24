@@ -1,6 +1,6 @@
 # One-time: register Windows Task Scheduler job for scripts/run-daily.ps1
 param(
-    [string]$DailyAt = "15:00",
+    [string]$DailyAt = "17:00",
     [string]$TaskName = "DailyKnowledgeDigest"
 )
 

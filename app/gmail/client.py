@@ -125,9 +125,17 @@ class GmailClient:
             return creds
 
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            self._persist_token(creds)
-            return creds
+            from google.auth.exceptions import RefreshError
+
+            try:
+                creds.refresh(Request())
+                self._persist_token(creds)
+                return creds
+            except RefreshError:
+                # revoked / expired refresh token — drop cache file and redo browser consent
+                if self._token_path and self._token_path.exists():
+                    self._token_path.unlink(missing_ok=True)
+                creds = None
 
         if self._credentials_path is None:
             raise RuntimeError(

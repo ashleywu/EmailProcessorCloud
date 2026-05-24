@@ -4,6 +4,7 @@
 - **Milestone 2**: Gmail integration layer (`app/gmail/`) — `GmailClient`, `GmailFetcher`, `GmailLabeler`, `GmailSender`. Use `build_gmail_client(load_settings())` so OAuth paths stay centralized. All collaborators are mockable; tests run without network or real credentials.
 - **Milestone 3–5**: parsing, LLM agents, daily digest orchestration, HTML composer, quality gate (see `milestone5.md`).
 - **Milestone 6**: CLI (`run-daily`, `preview-digest`, `show-config`), `pydantic-settings` loading, end-to-end docs (see `milestone6.md`).
+- **Milestone 7**: VPS deployment (`scripts/run-daily.sh`, `docs/deploy-vps.md` — checklist `milestone7.md`).
 
 ## Setup
 
@@ -44,7 +45,7 @@ python -m app.main preview-digest --date YYYY-MM-DD -o preview.html
 
 ## Scheduled daily run (Windows)
 
-To run **`run-daily` automatically every day at 3:00 PM local time** without opening a terminal:
+To run **`run-daily`** automatically every day at **5:00 PM** (your PC’s local clock) without opening a terminal:
 
 1. Install the app and Gmail extras in a **`.venv`** under this repo (recommended): `pip install -e ".[dev,gmail]"`.
 2. Ensure **`.env`** and Gmail **`credentials.json` / `token.json`** paths work when the repo folder is the working directory (defaults use `Path.cwd()` unless you set absolute paths in `.env`).
@@ -54,7 +55,7 @@ To run **`run-daily` automatically every day at 3:00 PM local time** without ope
    powershell -ExecutionPolicy Bypass -File .\scripts\register-daily-task.ps1
    ```
 
-   Default is **15:00** local time. Override: `.\scripts\register-daily-task.ps1 -DailyAt "15:00"`.
+   Default is **17:00** local time. Override: `.\scripts\register-daily-task.ps1 -DailyAt "17:00"`.
 
 4. Logs append under **`logs/run-daily-YYYY-MM.log`**.
 
@@ -66,6 +67,10 @@ Unregister-ScheduledTask -TaskName DailyKnowledgeDigest -Confirm:$false
 
 The task runs **in your Windows user context** (typical when creating tasks without “run whether user is logged on”). If you need it while logged off, configure **Run whether user is logged on or not** and stored credentials in Task Scheduler.
 
+## Scheduled daily run (Ubuntu VPS)
+
+Lightsail-style flow: **`ubuntu`** user, layout under **`~/daily-digest/`**, invoking **`scripts/run-daily.sh`** from **`cron`**. Full steps (absolute `.env paths`, **`scp`** for secrets, OAuth **`token.json` upload, **`CRON_TZ=America/Los_Angeles`**) live in [`docs/deploy-vps.md`](docs/deploy-vps.md).
+
 ## Tests
 
 ```bash
@@ -76,7 +81,7 @@ Tests use fakes and mocks (`GmailClient(service_factory=...)`, patched Gmail in 
 
 ## Development milestone workflow
 
-Implement milestone specs in order (`milestone5.md`, `milestone6.md`). Each milestone adds tests and keeps CLI/storage contracts explicit.
+Implement milestone specs in order (`milestone5.md`, `milestone6.md`, **`milestone7.md`**). Each milestone adds tests and keeps CLI/storage contracts explicit where applicable (Milestone 7 is deployment documentation + shell wrapper).
 
 ## Safety guarantees
 

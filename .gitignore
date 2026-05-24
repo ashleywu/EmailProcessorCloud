@@ -16,6 +16,9 @@ data/**/*.db
 # Scheduler / local logs
 logs/
 
+# Machine-local VPS address / ssh hints (never commit real IPs to public remote)
+LOCAL-VPS.md
+
 # Python
 __pycache__/
 *.py[cod]
