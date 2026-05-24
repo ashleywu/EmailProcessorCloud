@@ -60,7 +60,7 @@
     {% if it.summary %}<div class="sub">{{ it.summary | e }}</div>{% endif %}
     <ul>
     {% for row in it['items'] %}
-      <li>{{ row.entity | e }} — {{ row.impact_or_action | e }}{% if row.url %} (<a href="{{ row.url | e }}">{{ row.url | e }}</a>){% endif %}<div class="sub">Source: {{ row.source_subject | e }}{% if row.source_sender %} · From: {{ row.source_sender | e }}{% endif %}</div></li>
+      <li>{{ row.entity | e }} — {{ row.impact_or_action | e }}{% if row.url %} (<a href="{{ row.url | e }}">{{ row.url | e }}</a>){% endif %}</li>
     {% endfor %}
     </ul>
   </div>
@@ -78,7 +78,7 @@
     {% if it.summary %}<div class="sub">{{ it.summary | e }}</div>{% endif %}
     <ul>
     {% for s in it.signals %}
-      <li><strong>{{ s.theme | e }}</strong>: {{ s.insight | e }}; Action: {{ s.actionable_item | e }}{% if s.link %} · <a href="{{ s.link | e }}">link</a>{% endif %}<div class="sub">Source: {{ s.source_subject | e }}{% if s.source_sender %} · From: {{ s.source_sender | e }}{% endif %}</div></li>
+      <li><strong>{{ s.theme | e }}</strong>: {{ s.insight | e }}; Action: {{ s.actionable_item | e }}{% if s.link %} · <a href="{{ s.link | e }}">link</a>{% endif %}</li>
     {% endfor %}
     </ul>
   </div>
