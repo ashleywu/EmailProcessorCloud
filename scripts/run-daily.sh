@@ -15,10 +15,16 @@ if [[ ! -d "${REPO_ROOT}/.venv" ]]; then
   exit 1
 fi
 
+if [[ -t 2 ]] || [[ -t 1 ]]; then
+  echo "Logging to ${log_file} — follow progress: tail -f $(printf '%q' "${log_file}")" >&2
+fi
+
+# Activate outside the log redirect block — avoids brittle parsing edge cases inside `{ ... }`.
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/.venv/bin/activate"
+export PYTHONUNBUFFERED=1
+
 {
   printf '\n======== %s ========\n' "$(date '+%Y-%m-%d %H:%M:%S %z')"
-  # shellcheck source=/dev/null
-  source "${REPO_ROOT}/.venv/bin/activate"
-  export PYTHONUNBUFFERED=1
   python -m app.main run-daily
 } >>"${log_file}" 2>&1

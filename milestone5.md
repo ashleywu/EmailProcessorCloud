@@ -17,8 +17,8 @@
 
 - **`update_digest_body(digest_id, *, body_html, title=None)`** (or equivalent): overwrite body during quality-gate retries; if only body and **`updated_at`** change, behavior should match **`update_digest_status`** conventions (timestamps, etc.).
 - **`get_outputs_by_email_ids(email_ids: Sequence[int]) -> ...`** contract:
-  - Returns everything needed to compose a digest: at least **`email_id`**, **`kind`**, **`payload`** (and optionally **`created_at`** / **`id`** for troubleshooting).
-  - **Multiple rows per `(email_id, kind)`:** consume **only the latest row by `created_at` (or `id`)**, or aggregate inside this method so there is **at most one row per email per `kind`**; the rule must be fixed in the docstring—the **Composer must not resolve ambiguity itself**.
+  - Returns everything needed to compose a digest: at least **`email_id`**, **`kind`**, **`payload`** (and optionally **`created_at`** / **`id`** / **`email_section_id`** for troubleshooting).
+  - **Section pipeline:** compose from **multiple rows per `email_id`** distinguished by **`email_section_id`** and **`kind`**. Consume **only the latest row per `(email_id, email_section_id, kind)`** by greatest **`id`** (or equivalent)—the Composer must receive an unambiguous set; **`DigestComposer` itself does not disambiguate duplicates**.
 - **`create_digest`:** parameters and INSERT columns align with **`body_html`**; remove references to **`body_markdown`**.
 
 ### 3. Safe `RunLock` release
@@ -29,7 +29,7 @@
 
 ### 4. Per-email failure (do not block the batch)
 
-- When **one** message fails at **parse / route / processor**:
+- When **one** message fails at **parse / route / processor** (**including**: any thrown error **mid–multi-section slice loop** ⇒ that message **must not `attach_email_to_digest`** for this digest, even when earlier slices already wrote **`agent_outputs`**):
   - Set **`emails.status`** to **`'failed'`**;
   - Use **`update_email_status(..., increment_retry=True)`** (or equivalent consistent with **`fetch_retryable_errors`**) to bump **`retry_count`** so messages under the cap can be picked up later;
   - **Skip** that message and continue with the rest.
@@ -59,29 +59,32 @@ app/agents/
 
 1. **Acquire run lock:** if **`acquire()`** fails, **exit safely** (no digest row writes, no mail mutations, no send; **do not call `release()`**).
 2. **Candidate messages:** merge **`fetch_unprocessed_emails()`** (**`pending`**) and **`fetch_retryable_errors()`** (**`failed`** under retry cap); dedupe by **`email_id`**.
-3. For each candidate: **parse → route → matching processor**; apply §I.4 on failure.
-4. Each success: **`save_agent_output`** (and persist router output if that’s the architecture); **`attach_email_to_digest(digest_id, email_id)`** only for messages that will appear in this digest (you may **`create_digest(status='draft', …)`** first or accumulate successes then create—implementation choice, but links must stay consistent).
-5. **Empty success set:** if **no** message produces composable output:
+3. For each candidate **(§I.4 slice loop is all-or-nothing per digest inclusion):**
+   - When **`repo.try_reuse_complete_outputs(email_id)`** succeeds, **`attach_email_to_digest(digest_id, email_id)`** without refetch/process (shortcut when **every** slice already holds router + processor outputs).
+   - Else **`fetch_message_html` → `parse_newsletter_html` → `normalize_sections_for_routing` → `replace_email_sections`**, then iterate persisted **`email_sections`** in reading order (**`sorted(..., order_index, id)`**). **`_reuse_section_processor_if_cached`** skips router/processor RPC when router+processor JSON already matches that **`email_sections.id`**. Otherwise **`RouterAgent.run` → `save_agent_output`(router)** → **`run_section`** on the routed processor **`save_agent_output`**. **Only when all slices succeed** ⇒ **`attach_email_to_digest`**; otherwise apply §I.4 (**no attach**—partial SQLite rows remain until rewritten or cascading **`replace`** when slice keys/hashes shift).
+4. **Empty success set:** if **no** message produces composable output:
    - **Do not** send;
    - **Do not** archive / **`AI_DIGEST_PROCESSED`** / category labels for any message;
    - Optionally create a **`digests`** row marked **`skipped`** or **`empty`** (name must match code/constants/docs) or **omit** creating a digest—**pick one and document it in code or comments**; tests must cover the branch.
-6. **`DigestComposer`:** depends only on **`get_outputs_by_email_ids`** (plus metadata such as **subject** / **sender** if not embedded in payloads—no full-body reread), renders **HTML** with **Jinja2** (template language for UI copy may be English by default). Section titles map from **`RouteCategory`**:
+5. **`DigestComposer`:** depends only on **`get_outputs_by_email_ids`** (+ **subject/sender**/section metadata joins—no raw-mail reread), renders HTML with **Jinja2**.
 
    | `RouteCategory` | Section title        |
    |-----------------|----------------------|
    | TECHNOLOGY      | Technical Index      |
    | RADAR           | AI Radar             |
    | LEADERSHIP      | Leadership Signals   |
-   | NOISE           | Filtered Noise       |
+   | COURSES         | Courses              |
 
-7. **Quality gate:** **`DigestQualityGateAgent`** inspects HTML (garbled output, suspicious unescaped markup, broken structure, etc.). **Retry semantics:** **first draft + up to 2 rewrites driven by `problems` = at most 3 generations**; if the third still fails, raise **`QualityGateFailedException`** (or the project’s chosen exception).
-8. **Send:** after the gate passes, **`GmailSender.send_html`**.
-9. **Only after send succeeds** (for messages **included in this digest**):
-   - **`GmailLabeler.add_category(message_id, category)`**;
-   - **`GmailLabeler.mark_processed(message_id)`** (**`AI_DIGEST_PROCESSED`**);
-   - **`GmailLabeler.archive(message_id)`**;
+   **Slice pipeline (`email_section_id` set):** **`RouterAgent`** returns **exactly one `RouteCategory` per persisted section**. Mixed-topic newsletters use **multiple DOM sections** (after **`normalize_sections_for_routing`**), routed independently with **`TechnologySectionOutput`**, **`RadarOutput`**, **`LeadershipSectionOutput`**, **`CoursesOutput`/noise** per slice; **`DigestComposer`** maps rows into digest columns (**not** legacy whole-email **`TechnologyOutput`** bundle fan-out).
+
+   **Legacy rows:** **`email_section_id` NULL** history may retain **`TechnologyOutput`**, **`LeadershipOutput`**, or nested payloads (`leadership_excerpt`, `roundup_radar`, `session_promos`, …); **`DigestComposer`** may still flatten those envelopes when reloading old JSON. Persisted routers that emitted legacy **`MULTI_BUNDLE`** / **`EVERY_BUNDLE`** normalize to **`TECHNOLOGY`** while preserving stored payloads verbatim.
+
+6. **Quality gate:** **`DigestQualityGateAgent`** inspects HTML (garbled output, suspicious unescaped markup, broken structure, etc.). **Retry semantics:** **first draft + up to 2 rewrites driven by `problems` = at most 3 generations**; if the third still fails, raise **`QualityGateFailedException`** (or the project’s chosen exception).
+7. **Send:** after the gate passes, **`GmailSender.send_html`**.
+8. **Only after send succeeds** (for messages **included in this digest**):
+   - **`GmailLabeler.add_labels(message_id, [AI_DIGEST_PROCESSED], remove=[INBOX])`** — single user-visible label **`AI_DIGEST_PROCESSED`** and archive out of inbox;
    - DB: set **`emails.status`** to **`'archived'`** (§I.1).
-10. **`finally`:** call **`release()`** only if this run **successfully `acquire()`’d**.
+9. **`finally`:** call **`release()`** only if this run **successfully `acquire()`’d**.
 
 ### 2. Digest status when send fails
 
@@ -98,8 +101,7 @@ app/agents/
 
 ### 4. `DigestComposer`
 
-- Uses only repository structured outputs—**does not** reread full raw mail.
-- Output is **HTML** (**`app/digest/templates/daily_digest.html.j2`**; section labels come from template / **`DigestComposer`** / **`DailyDigestAgent`** parameters).
+- Contract details (section vs legacy payloads, **`email_section_id`**, category → template headings): **§II.1 step 5** above.
 - After QA failure, accept **`problems: list[str]`** (or agreed type) and emit revised HTML (**`DailyDigestAgent`** drives the loop).
 
 ### 5. `DigestQualityGateAgent`
@@ -117,6 +119,7 @@ app/agents/
 4. **Run lock:** an instance that **did not** acquire must **not** clear another holder’s **`run_locks`** row.
 5. **Single-email failure:** one **`'failed'`** message does **not** prevent other successes from entering the same digest (assert HTML / links only include successes).
 6. **(Recommended)** **`digest_emails`:** after send, successful **`email_id`** rows link to the correct **`digest_id`**.
+7. **Section pipeline / Step 5 style tests:** multi-section mixed routing (four headings → four categories), deterministic **`RouterAgent`** fakes keyed by **`section_heading` / `section_key`** (see **`docs/section-extraction.md`** § *Testing section routing across retries* — **avoid** list **`side_effect` queues** across failure/retry), processor failure ⇒ **omit entire email from digest**, **`get_latest_outputs_by_email_ids`** ⇒ latest per **`(email_id, email_section_id, kind)`**, slice cache/`replace_email_sections` stability exercised in **`tests/test_step5_section_digest_integration.py`** + **`tests/test_repository_sections.py`**.
 
 ---
 
@@ -124,8 +127,10 @@ app/agents/
 
 - **`app/gmail/labeler.py`:** **`PROCESSED_LABEL`**, **`category_label_name`**, **`archive`** semantics.
 - **`app/gmail/sender.py`:** what counts as send success.
-- **`app/models/outputs.py`:** **`RouteCategory`** and **`*Output`** models (Composer deserializes **`payload`**).
-- **`app/storage/repository.py`:** **`fetch_unprocessed_emails`** / **`fetch_retryable_errors`** / **`attach_email_to_digest`** / **`update_email_status`**.
+- **`app/models/outputs.py`:** **`RouteCategory`**, **`RouterDecision`**, section-native payloads (**`TechnologySectionOutput`**, etc.).
+- **`app/digest/composer.py`** / **`app/digest/templates/daily_digest.html.j2`**.
+- **`app/storage/repository.py`:** **`fetch_unprocessed_emails`** / **`fetch_retryable_errors`** / **`attach_email_to_digest`** / **`update_email_status`** / **`replace_email_sections`** / **`section_pipeline_outputs_cached`**.
+- **`docs/section-extraction.md`:** section invariants + **retry-test guidance** for router mocks.
 
 ---
 

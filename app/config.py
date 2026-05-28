@@ -146,6 +146,25 @@ def format_gmail_config_summary(settings: Settings) -> str:
     senders_display = ",".join(settings.newsletter_senders) if settings.newsletter_senders else "(none)"
     lines.append(f"NEWSLETTER_SENDERS={senders_display}")
 
+    from app.gmail.fetcher import build_query
+
+    lines.append("")
+    if settings.newsletter_senders:
+        try:
+            preview = build_query(
+                list(settings.newsletter_senders),
+                lookback_days=settings.gmail_lookback_days,
+            )
+            lines.append("gmail_messages_list_query_preview=")
+            lines.append(f"  {preview}")
+        except ValueError as exc:
+            lines.append("gmail_messages_list_query_preview=(invalid)")
+            lines.append(f"  {exc}")
+    else:
+        lines.append(
+            "gmail_messages_list_query_preview=(skipped — NEWSLETTER_SENDERS empty)",
+        )
+
     recv = settings.digest_recipient_email or "(not set)"
     lines.append(f"DIGEST_RECIPIENT_EMAIL={recv}")
 
@@ -157,8 +176,9 @@ def format_gmail_config_summary(settings: Settings) -> str:
     lines.append(f"  {PROCESSED_LABEL}")
     lines.append(f"  {ERROR_LABEL}")
     lines.append(
-        "(Category labels AI_DIGEST/TECHNOLOGY etc. are not applied; "
-        "use only PROCESSED + archive.)",
+        "(After a successful send, each source message gets only AI_DIGEST_PROCESSED and is "
+        "removed from the inbox (archive). "
+        "-label excludes keep already-processed mail out of ingest.)",
     )
 
     lines.append("oauth_scopes:")

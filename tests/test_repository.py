@@ -5,7 +5,13 @@ from datetime import date, datetime, timezone
 import pytest
 
 from app.models.email import EmailInput
-from app.models.outputs import RouterDecision, RouteCategory, TechnologyOutput
+from app.models.outputs import (
+    RouterDecision,
+    RouteCategory,
+    TechnologyOutput,
+    TechnologySectionOutput,
+)
+from app.models.section import EmailSection
 from app.storage.repository import AgentOutputRecord, StateRepository
 
 
@@ -134,18 +140,42 @@ def test_technology_output_saved(repo: StateRepository) -> None:
 def test_try_reuse_complete_outputs(repo: StateRepository) -> None:
     eid = repo.upsert_email(EmailInput(message_id="r1"))
     assert repo.try_reuse_complete_outputs(eid) is None
+
+    secs = repo.replace_email_sections(
+        eid,
+        [
+            EmailSection(
+                section_id="s0",
+                order_index=0,
+                text="x" * 400 + " body " * 20,
+                links=["https://ex.example/article"],
+                image_urls=[],
+            ),
+        ],
+    )
+    sid = secs[0].id
+
     repo.save_agent_output(
         eid,
         "router",
         RouterDecision(category=RouteCategory.TECHNOLOGY, confidence=0.8),
+        email_section_id=sid,
     )
     assert repo.try_reuse_complete_outputs(eid) is None
+
     repo.save_agent_output(
         eid,
         "technology",
-        TechnologyOutput(core_pain_point="x"),
+        TechnologySectionOutput(
+            title="T",
+            core_pain_point="x",
+            original_url="https://ex.example/article",
+            diagrams=[],
+        ),
+        email_section_id=sid,
+        category=RouteCategory.TECHNOLOGY.value,
     )
-    assert repo.try_reuse_complete_outputs(eid) == RouteCategory.TECHNOLOGY
+    assert repo.try_reuse_complete_outputs(eid) == frozenset({RouteCategory.TECHNOLOGY})
 
 
 def test_get_outputs_by_email_ids_latest_per_kind(repo: StateRepository) -> None:
@@ -153,7 +183,7 @@ def test_get_outputs_by_email_ids_latest_per_kind(repo: StateRepository) -> None
     repo.save_agent_output(
         eid,
         "router",
-        RouterDecision(category=RouteCategory.NOISE, confidence=0.5),
+        RouterDecision(category=RouteCategory.COURSES, confidence=0.5),
     )
     repo.save_agent_output(
         eid,

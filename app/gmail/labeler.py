@@ -15,6 +15,9 @@ def category_label_name(category: RouteCategory | str) -> str:
     """Return the Gmail label name used for a router category."""
 
     value = category.value if isinstance(category, RouteCategory) else str(category)
+    # Legacy routers persisted ``NOISE``; Gmail label rename is ``AI_DIGEST/COURSES``.
+    if value == "NOISE":
+        value = RouteCategory.COURSES.value
     return f"{CATEGORY_LABEL_PREFIX}{value}"
 
 

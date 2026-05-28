@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -8,6 +9,16 @@ from app.storage.db import open_initialized
 
 DEFAULT_LOCK_NAME = "daily_digest_agent"
 DEFAULT_TTL_MINUTES = 60
+
+
+def _process_alive(pid: int) -> bool:
+    """Return True iff ``pid`` can receive signals on this POSIX host (cheap liveness probe)."""
+
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 class RunLock:
@@ -49,16 +60,28 @@ class RunLock:
         conn.execute("BEGIN IMMEDIATE")
         try:
             row = conn.execute(
-                "SELECT expires_at FROM run_locks WHERE lock_name = ?",
+                """
+                SELECT expires_at, locked_at, owner
+                FROM run_locks
+                WHERE lock_name = ?
+                """,
                 (self._lock_name,),
             ).fetchone()
             now = datetime.now(timezone.utc)
             if row is not None:
                 expires_at = datetime.fromisoformat(str(row["expires_at"]))
-                if expires_at > now:
+                stale_by_dead_pid = False
+                ow = row["owner"]
+                if ow is not None:
+                    txt = str(ow).strip()
+                    if txt.isdigit():
+                        stale_by_dead_pid = not _process_alive(int(txt))
+
+                if expires_at > now and not stale_by_dead_pid:
                     conn.rollback()
                     return False
 
+            locked_owner = owner if owner is not None else str(os.getpid())
             locked_at = now
             expires_at = locked_at + timedelta(minutes=self._ttl_minutes)
             locked_iso = locked_at.isoformat()
@@ -75,7 +98,7 @@ class RunLock:
                     self._lock_name,
                     locked_iso,
                     expires_at.isoformat(),
-                    owner,
+                    locked_owner,
                 ),
             )
             conn.commit()

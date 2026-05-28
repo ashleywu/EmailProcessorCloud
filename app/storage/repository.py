@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -12,6 +13,8 @@ from pydantic import BaseModel
 from app.models.digest import ProcessedEmail
 from app.models.email import EmailInput
 from app.models.outputs import PROCESSOR_OUTPUT_KIND, RouterDecision, RouteCategory
+from app.models.section import EmailSection
+from app.parsing.section_caps import compute_section_content_hash
 from app.storage.db import init_schema, open_initialized
 
 
@@ -27,12 +30,33 @@ def _parse_dt(value: str | None) -> datetime | None:
 
 @dataclass(frozen=True, slots=True)
 class AgentOutputRecord:
-    """Latest agent output row for one (email_id, kind), see ``get_outputs_by_email_ids``."""
+    """Latest row per (email_id, email_section_id, kind)—see ``get_latest_outputs_by_email_ids``."""
 
     id: int
     email_id: int
     kind: str
     payload: str
+    created_at: str
+    email_section_id: int | None = None
+    section_key: str | None = None
+    category: str | None = None
+    section_order_index: int | None = None
+    section_heading: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EmailSectionRecord:
+    """Persisted ``email_sections`` row returned from ``replace_email_sections`` / ``list_email_sections``."""
+
+    id: int
+    email_id: int
+    section_key: str
+    order_index: int
+    heading: str | None
+    text: str
+    links_json: str
+    image_urls_json: str
+    content_hash: str
     created_at: str
 
 
@@ -97,18 +121,252 @@ class StateRepository:
         assert row is not None
         return int(row["id"])
 
-    def save_agent_output(self, email_id: int, kind: str, output: BaseModel) -> int:
+    def save_agent_output(
+        self,
+        email_id: int,
+        kind: str,
+        output: BaseModel,
+        *,
+        email_section_id: int | None = None,
+        category: str | None = None,
+    ) -> int:
+        """Persist one agent JSON row.
+
+        ``email_section_id`` NULL keeps legacy whole-email granularity. When ``kind`` is ``router``,
+        ``category`` (if passed) must match ``RouterDecision.category`` in ``output``.
+        """
+
         payload = output.model_dump_json()
+        canonical_category = category
+
+        if kind == "router":
+            decision = RouterDecision.model_validate(output)
+            expected = decision.category.value
+            if canonical_category is not None and canonical_category != expected:
+                msg = f"category {canonical_category!r} mismatches RouterDecision.category {expected!r}"
+                raise ValueError(msg)
+            canonical_category = expected
+        elif canonical_category is not None:
+            # Denormalized field for processors: allowed but payload has no canonical category anchor.
+            pass
+
+        if email_section_id is not None:
+            row = self._conn.execute(
+                "SELECT id FROM email_sections WHERE id = ? AND email_id = ?",
+                (email_section_id, email_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError(
+                    "email_section_id does not belong to this email_id (or missing row)",
+                )
+
         now = _utc_now_iso()
         cur = self._conn.execute(
             """
-            INSERT INTO agent_outputs (email_id, kind, payload, created_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO agent_outputs (
+              email_id, email_section_id, kind, category, payload, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (email_id, kind, payload, now),
+            (email_id, email_section_id, kind, canonical_category, payload, now),
         )
         self._conn.commit()
         return int(cur.lastrowid)
+
+    def replace_email_sections(
+        self,
+        email_id: int,
+        sections: Sequence[EmailSection],
+    ) -> list[EmailSectionRecord]:
+        """Swap slices while preserving IDs when `(section_key, content_hash)` is unchanged."""
+
+        cur = self._conn.cursor()
+        now = _utc_now_iso()
+        inserted: list[EmailSectionRecord] = []
+        tracked_ids: list[int] = []
+        try:
+            pairs = [(s, compute_section_content_hash(s)) for s in sections]
+
+            for sec, chash in pairs:
+                links_payload = json.dumps(sec.links)
+                imgs_payload = json.dumps(sec.image_urls)
+                heading = sec.heading
+                section_key = sec.section_id.strip()
+
+                match = cur.execute(
+                    """
+                    SELECT id FROM email_sections
+                    WHERE email_id = ? AND section_key = ? AND content_hash = ?
+                    """,
+                    (email_id, section_key, chash),
+                ).fetchone()
+
+                if match:
+                    pk = int(match["id"])
+                    cur.execute(
+                        """
+                        UPDATE email_sections
+                           SET order_index = ?,
+                               heading = ?,
+                               text = ?,
+                               links_json = ?,
+                               image_urls_json = ?,
+                               content_hash = ?
+                         WHERE id = ? AND email_id = ?
+                        """,
+                        (
+                            sec.order_index,
+                            heading,
+                            sec.text or "",
+                            links_payload,
+                            imgs_payload,
+                            chash,
+                            pk,
+                            email_id,
+                        ),
+                    )
+                    tracked_ids.append(pk)
+                else:
+                    cur.execute(
+                        "DELETE FROM email_sections WHERE email_id = ? AND section_key = ?",
+                        (email_id, section_key),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO email_sections (
+                          email_id, section_key, order_index, heading, text,
+                          links_json, image_urls_json, content_hash, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            email_id,
+                            section_key,
+                            sec.order_index,
+                            heading,
+                            sec.text or "",
+                            links_payload,
+                            imgs_payload,
+                            chash,
+                            now,
+                        ),
+                    )
+                    tracked_ids.append(int(cur.lastrowid))
+
+            placeholders = ",".join("?" for _ in tracked_ids)
+            cur.execute(
+                f"""
+                DELETE FROM email_sections
+                 WHERE email_id = ?
+                   AND id NOT IN ({placeholders})
+                """,
+                (email_id, *tracked_ids),
+            )
+
+            rows = cur.execute(
+                f"""
+                SELECT id, email_id, section_key, order_index, heading, text,
+                       links_json, image_urls_json, content_hash, created_at
+                  FROM email_sections
+                 WHERE email_id = ?
+                   AND id IN ({placeholders})
+                 ORDER BY order_index, id
+                """,
+                (email_id, *tracked_ids),
+            ).fetchall()
+            inserted = [_row_to_section_record(r) for r in rows]
+
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+        return inserted
+
+    def list_email_sections(self, email_id: int) -> list[EmailSectionRecord]:
+        rows = self._conn.execute(
+            """
+            SELECT id, email_id, section_key, order_index, heading, text,
+                   links_json, image_urls_json, content_hash, created_at
+            FROM email_sections
+            WHERE email_id = ?
+            ORDER BY order_index, id
+            """,
+            (email_id,),
+        ).fetchall()
+        return [_row_to_section_record(r) for r in rows]
+
+    def get_latest_agent_output_for_section_kind(
+        self,
+        email_id: int,
+        *,
+        section_id: int,
+        kind: str,
+    ) -> AgentOutputRecord | None:
+        """Return newest ``agent_outputs`` slice for `(email_id, section_id, kind)`."""
+
+        row = self._conn.execute(
+            """
+            SELECT ao.id, ao.email_id, ao.email_section_id, ao.kind, ao.category, ao.payload,
+                   ao.created_at, es.section_key, es.order_index AS section_order_index,
+                   es.heading AS section_heading
+            FROM agent_outputs ao
+            LEFT JOIN email_sections es ON es.id = ao.email_section_id
+            WHERE ao.email_id = ?
+              AND ao.email_section_id = ?
+              AND ao.kind = ?
+            ORDER BY ao.id DESC
+            LIMIT 1
+            """,
+            (email_id, section_id, kind),
+        ).fetchone()
+        return _row_to_agent_output(row) if row is not None else None
+
+    def section_pipeline_outputs_cached(self, email_id: int) -> bool:
+        """``True`` when every stored section row has a fresh router decision + processor JSON."""
+
+        secs = self.list_email_sections(email_id)
+        if not secs:
+            return False
+        for srec in secs:
+            r_row = self.get_latest_agent_output_for_section_kind(email_id, section_id=srec.id, kind="router")
+            if r_row is None:
+                return False
+            try:
+                decision = RouterDecision.model_validate_json(r_row.payload)
+            except Exception:
+                return False
+            proc_kind = PROCESSOR_OUTPUT_KIND[decision.category]
+            proc_row = self.get_latest_agent_output_for_section_kind(email_id, section_id=srec.id, kind=proc_kind)
+            if proc_row is None and decision.category == RouteCategory.COURSES:
+                proc_row = self.get_latest_agent_output_for_section_kind(
+                    email_id,
+                    section_id=srec.id,
+                    kind="noise",
+                )
+            if proc_row is None:
+                return False
+        return True
+
+    def router_categories_cached_for_sections(self, email_id: int) -> frozenset[RouteCategory] | None:
+        """Return merged router categories stored per section.
+
+        ``None`` when any section misses router output — caller should rerun the pipeline instead of reusing.
+        """
+
+        secs = self.list_email_sections(email_id)
+        if not secs:
+            return None
+        cats: set[RouteCategory] = set()
+        for srec in secs:
+            r_row = self.get_latest_agent_output_for_section_kind(email_id, section_id=srec.id, kind="router")
+            if r_row is None:
+                return None
+            try:
+                decision = RouterDecision.model_validate_json(r_row.payload)
+            except Exception:
+                return None
+            cats.add(decision.category)
+        return frozenset(cats)
 
     def create_digest(
         self,
@@ -216,61 +474,56 @@ class StateRepository:
             )
         self._conn.commit()
 
-    def get_outputs_by_email_ids(self, email_ids: Sequence[int]) -> list[AgentOutputRecord]:
-        """Return the latest row per (email_id, kind) by highest ``id``.
+    def get_latest_outputs_by_email_ids(self, email_ids: Sequence[int]) -> list[AgentOutputRecord]:
+        """Latest row per (email_id, email_section_id, kind) by greatest ``id``."""
 
-        When multiple outputs share the same (email_id, kind), only the row
-        with the greatest ``id`` is returned (proxy for latest ``created_at``).
-        """
         ids = list(dict.fromkeys(int(i) for i in email_ids))
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
         sql = f"""
-            SELECT ao.id, ao.email_id, ao.kind, ao.payload, ao.created_at
+            SELECT ao.id, ao.email_id, ao.email_section_id, ao.kind, ao.category, ao.payload, ao.created_at,
+                   es.section_key, es.order_index AS section_order_index,
+                   es.heading AS section_heading
             FROM agent_outputs ao
+            LEFT JOIN email_sections es ON es.id = ao.email_section_id
             INNER JOIN (
-              SELECT email_id, kind, MAX(id) AS max_id
+              SELECT email_id, email_section_id, kind, MAX(id) AS max_id
               FROM agent_outputs
               WHERE email_id IN ({placeholders})
-              GROUP BY email_id, kind
+              GROUP BY email_id, email_section_id, kind
             ) t
               ON ao.email_id = t.email_id
              AND ao.kind = t.kind
              AND ao.id = t.max_id
-            ORDER BY ao.email_id, ao.kind
+             AND (
+                   (ao.email_section_id IS NULL AND t.email_section_id IS NULL)
+                OR (ao.email_section_id = t.email_section_id)
+             )
+            ORDER BY ao.email_id,
+                     (es.order_index IS NULL) ASC,
+                     COALESCE(es.order_index, 2147483647),
+                     ao.kind
         """
         rows = self._conn.execute(sql, ids).fetchall()
-        return [
-            AgentOutputRecord(
-                id=int(r["id"]),
-                email_id=int(r["email_id"]),
-                kind=str(r["kind"]),
-                payload=str(r["payload"]),
-                created_at=str(r["created_at"]),
-            )
-            for r in rows
-        ]
+        return [_row_to_agent_output(r) for r in rows]
 
-    def try_reuse_complete_outputs(self, email_id: int) -> RouteCategory | None:
-        """Return router category when latest ``router`` + matching processor rows exist.
+    def list_outputs_for_digest(self, email_ids: Sequence[int]) -> list[AgentOutputRecord]:
+        """Alias of ``get_latest_outputs_by_email_ids`` with readable name for callers."""
 
-        Enables a later ``run_daily`` after quality-gate or send failure to compose a new
-        digest from persisted structured outputs only (no Gmail full fetch, no LLM).
-        """
+        return self.get_latest_outputs_by_email_ids(email_ids)
 
-        rows = self.get_outputs_by_email_ids([email_id])
-        by_kind = {r.kind: r.payload for r in rows}
-        if "router" not in by_kind:
+    def get_outputs_by_email_ids(self, email_ids: Sequence[int]) -> list[AgentOutputRecord]:
+        """Backward-compatible name for digest composition / tests."""
+
+        return self.get_latest_outputs_by_email_ids(email_ids)
+
+    def try_reuse_complete_outputs(self, email_id: int) -> frozenset[RouteCategory] | None:
+        """Reuse persisted per-section outputs when every slice still has router + processor JSON."""
+
+        if not self.section_pipeline_outputs_cached(email_id):
             return None
-        try:
-            decision = RouterDecision.model_validate_json(by_kind["router"])
-        except Exception:
-            return None
-        proc_kind = PROCESSOR_OUTPUT_KIND[decision.category]
-        if proc_kind not in by_kind:
-            return None
-        return decision.category
+        return self.router_categories_cached_for_sections(email_id)
 
     def get_email_subject_by_id(self, email_id: int) -> str | None:
         row = self._conn.execute(
@@ -356,3 +609,41 @@ class StateRepository:
             status=str(row["status"]),
             body_html=row["body_html"],
         )
+
+
+def _row_to_agent_output(r: sqlite3.Row) -> AgentOutputRecord:
+    soi = r["section_order_index"]
+    sec_key = r["section_key"]
+    sh_raw = None
+    if "section_heading" in r.keys():
+        sh_raw = r["section_heading"]
+    return AgentOutputRecord(
+        id=int(r["id"]),
+        email_id=int(r["email_id"]),
+        kind=str(r["kind"]),
+        payload=str(r["payload"]),
+        created_at=str(r["created_at"]),
+        email_section_id=(int(r["email_section_id"]) if r["email_section_id"] is not None else None),
+        section_key=str(sec_key) if sec_key is not None else None,
+        category=str(r["category"]) if r["category"] is not None else None,
+        section_order_index=int(soi) if soi is not None else None,
+        section_heading=str(sh_raw) if sh_raw is not None else None,
+    )
+
+
+def _row_to_section_record(r: sqlite3.Row) -> EmailSectionRecord:
+    ch_raw = ""
+    if "content_hash" in r.keys() and r["content_hash"] is not None:
+        ch_raw = str(r["content_hash"])
+    return EmailSectionRecord(
+        id=int(r["id"]),
+        email_id=int(r["email_id"]),
+        section_key=str(r["section_key"]),
+        order_index=int(r["order_index"]),
+        heading=r["heading"],
+        text=str(r["text"]),
+        links_json=str(r["links_json"]),
+        image_urls_json=str(r["image_urls_json"]),
+        content_hash=ch_raw,
+        created_at=str(r["created_at"]),
+    )

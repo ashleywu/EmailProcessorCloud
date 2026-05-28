@@ -162,6 +162,16 @@ python -m app.main run-daily
 python -m app.main preview-digest --date YYYY-MM-DD -o /tmp/preview.html
 ```
 
+**Stale SQLite run-lock:** If **`run-daily`** or **`scripts/run-daily.sh`** exits with **`Another run holds the lock; skipping.`** yet **`pgrep -af 'app.main run-daily'`** shows nothing (no holder process):
+
+- New installs store **`owner`** as numeric **PID**. If the PID has exited (**`SIGKILL`** / **`kill -9`**, OOM, etc.), the next run steals the lock automatically.
+- Rows with **`owner` NULL** (older runs) remain until TTL; clear manually (**only after** verifying no **`run-daily`** is running):
+
+  ```bash
+  cd ~/daily-digest/repo && source .venv/bin/activate
+  python -m app.main clear-run-lock
+  ```
+
 ---
 
 ## 8. Wrapper script [`scripts/run-daily.sh`](../scripts/run-daily.sh)
@@ -173,11 +183,15 @@ chmod +x ~/daily-digest/repo/scripts/run-daily.sh
 ~/daily-digest/repo/scripts/run-daily.sh
 ```
 
-**Never paste `crontab` lines (`CRON_TZ`, `0 17 * * *`, …)** into **`run-daily.sh`** — **`crontab -e`** only.
+**Never paste `crontab` lines (`0 17 * * *`, …)** into **`run-daily.sh`** — **`crontab -e`** only.
 
 ---
 
-## 9. Cron — **`America/Los_Angeles`**, daily **5:00 PM**
+## 9. Cron — daily **17:00 UTC** (~**10:00 AM Pacific**)
+
+Cloud VPS images usually keep the system clock at **`Etc/UTC`**. On **Debian/Ubuntu cron**, **`CRON_TZ` in a user crontab does not change when jobs fire** — it only sets the timezone for the command environment (`man 5 crontab`). Schedule using **UTC** hours.
+
+**`0 17 * * *`** on a UTC system ⇒ digest around **17:00 UTC**, which is roughly **10:00 AM Pacific (PDT)** or **9:00 AM (PST)** depending on daylight saving.
 
 Schedule as **`ubuntu`**:
 
@@ -185,10 +199,8 @@ Schedule as **`ubuntu`**:
 crontab -e
 ```
 
-**Scheduling — 17:00 (5 PM)** in **`America/Los_Angeles`**:
-
 ```cron
-CRON_TZ=America/Los_Angeles
+# Daily digest at 17:00 UTC (~10 AM Pacific during PDT).
 0 17 * * * /home/ubuntu/daily-digest/repo/scripts/run-daily.sh >> /home/ubuntu/daily-digest/logs/cron.log 2>&1
 ```
 
@@ -198,16 +210,18 @@ Verify:
 
 ```bash
 crontab -l
+timedatectl    # expect Time zone: Etc/UTC (or note your system TZ when reading hours)
 ```
+
+To run at a different wall-clock time, either change the hour in UTC or set the **system** timezone with **`timedatectl set-timezone …`** and restart **`cron`** — do not rely on **`CRON_TZ`** in the crontab on Ubuntu.
 
 ---
 
 ## 10. SQLite backup (daily)
 
-After digest (e.g. **5:30 PM**):
+After digest (e.g. **17:30 UTC**, half an hour later):
 
 ```cron
-CRON_TZ=America/Los_Angeles
 30 17 * * * cp /home/ubuntu/daily-digest/data/daily_digest.db "/home/ubuntu/daily-digest/backups/daily_digest_$(date +\%F).db"
 ```
 

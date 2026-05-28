@@ -13,7 +13,7 @@ from app.agents.daily_digest_agent import (
     DailyDigestAgent,
 )
 from app.agents.leadership_agent import LeadershipProcessorAgent
-from app.agents.noise_agent import NoiseProcessorAgent
+from app.agents.courses_agent import CoursesProcessorAgent
 from app.agents.radar_agent import RadarProcessorAgent
 from app.agents.router_agent import RouterAgent
 from app.agents.technology_agent import TechnologyProcessorAgent
@@ -66,7 +66,7 @@ def _agent(
         technology_agent=TechnologyProcessorAgent(llm, model="m"),
         radar_agent=RadarProcessorAgent(llm, model="m"),
         leadership_agent=LeadershipProcessorAgent(llm, model="m"),
-        noise_agent=NoiseProcessorAgent(llm, model="m"),
+        courses_agent=CoursesProcessorAgent(llm, model="m"),
         composer=DigestComposer(title="Test digest"),
         quality_gate=gate or DigestQualityGateAgent(),
         labeler=GmailLabeler(client),
@@ -76,7 +76,10 @@ def _agent(
 
 
 def test_digest_sent_archives_and_links_emails(tmp_path) -> None:
-    html_body = "<html><body><p>News</p></body></html>"
+    html_body = (
+        '<html><body><p>News digest body text here padded for section minimums.</p>'
+        '<a href="https://example.com/post">Read</a></body></html>'
+    )
     svc = FakeGmailService(messages={"gm1": _message_full_html("gm1", html_body)})
     db = tmp_path / "db1.sqlite"
     repo = StateRepository(db)
@@ -84,9 +87,9 @@ def test_digest_sent_archives_and_links_emails(tmp_path) -> None:
     llm = ScriptedLLMClient(
         [
             '{"category": "TECHNOLOGY", "confidence": 0.9, "rationale": null}',
-            '{"stories": [{"title": "T", "article_url": "https://example.com/post", '
-            '"summary": "Pain summary text here with enough detail for the digest."}], '
-            '"core_pain_point": null, "diagrams": [], "selected_image_urls": []}',
+            '{"title": "T", '
+            '"core_pain_point": "Pain summary text here with enough detail for the digest.", '
+            '"original_url": "https://example.com/post", "diagrams": []}',
         ],
     )
     _agent(repo, RunLock(db), svc, llm).run_daily()
@@ -111,7 +114,15 @@ def test_digest_sent_archives_and_links_emails(tmp_path) -> None:
 
 def test_single_email_failure_does_not_block_others(tmp_path) -> None:
     svc = FakeGmailService(
-        messages={"ok": _message_full_html("ok", "<html><body><p>Ok</p></body></html>")},
+        messages={
+            "ok": _message_full_html(
+                "ok",
+                '<html><body><p>'
+                + ("Ok newsletter body padded for minimum section length tokens. " * 25)
+                + '</p>'
+                '<a href="https://example.com/p">More</a></body></html>',
+            ),
+        },
     )
     db = tmp_path / "db2.sqlite"
     repo = StateRepository(db)
@@ -120,8 +131,9 @@ def test_single_email_failure_does_not_block_others(tmp_path) -> None:
     llm = ScriptedLLMClient(
         [
             '{"category": "TECHNOLOGY", "confidence": 0.9, "rationale": null}',
-            '{"stories": [{"title": "P", "article_url": "https://example.com/p", '
-            '"summary": "Summary."}], "core_pain_point": null, "diagrams": [], "selected_image_urls": []}',
+            '{"title": "P", '
+            '"core_pain_point": "Summary overview with enough unicode weight for QA.", '
+            '"original_url": "https://example.com/p", "diagrams": []}',
         ],
     )
     _agent(repo, RunLock(db), svc, llm).run_daily()
@@ -143,15 +155,25 @@ def test_single_email_failure_does_not_block_others(tmp_path) -> None:
 
 def test_send_failure_does_not_archive(tmp_path) -> None:
     svc = FakeGmailService(
-        messages={"g1": _message_full_html("g1", "<html><body><p>X</p></body></html>")},
+        messages={
+            "g1": _message_full_html(
+                "g1",
+                '<html><body><p>'
+                + ("Promotional teaser text with enough prose for ingest. " * 30)
+                + '</p>'
+                '<a href="https://courses.example/rsvp">RSVP</a></body></html>',
+            ),
+        },
     )
     db = tmp_path / "db3.sqlite"
     repo = StateRepository(db)
     repo.upsert_email(EmailInput(message_id="g1", subject="S"))
     llm = ScriptedLLMClient(
         [
-            '{"category": "NOISE", "confidence": 0.5, "rationale": null}',
-            '{"reason": "Ad only.", "discard": true}',
+            '{"category": "COURSES", "confidence": 0.5, "rationale": null}',
+            '{"summary": "Ad only teaser.", '
+            '"actions": [{"label": "RSVP","url":"https://courses.example/rsvp"}], '
+            '"promo_blocks": []}',
         ],
     )
     _agent(repo, RunLock(db), svc, llm, queue_send_fail=True).run_daily()
@@ -171,15 +193,25 @@ def test_send_failure_does_not_archive(tmp_path) -> None:
 
 def test_quality_gate_failure_persists_error(tmp_path) -> None:
     svc = FakeGmailService(
-        messages={"g1": _message_full_html("g1", "<html><body><p>Q</p></body></html>")},
+        messages={
+            "g1": _message_full_html(
+                "g1",
+                '<html><body><p>'
+                + ("Quality gate fixture padding for section routing minimums. " * 30)
+                + '</p>'
+                '<a href="https://learn.example/join">Join</a></body></html>',
+            ),
+        },
     )
     db = tmp_path / "db4.sqlite"
     repo = StateRepository(db)
     repo.upsert_email(EmailInput(message_id="g1", subject="S"))
     llm = ScriptedLLMClient(
         [
-            '{"category": "NOISE", "confidence": 0.5, "rationale": null}',
-            '{"reason": "Low value item.", "discard": true}',
+            '{"category": "COURSES", "confidence": 0.5, "rationale": null}',
+            '{"summary": "Low value RSVP note.", '
+            '"actions":[{"label":"Join","url":"https://learn.example/join"}],'
+            '"promo_blocks":[]}',
         ],
     )
 
@@ -202,15 +234,25 @@ def test_quality_gate_failure_persists_error(tmp_path) -> None:
 
 def test_retry_after_quality_fail_reuses_outputs_without_llm_or_fetch(tmp_path) -> None:
     svc = FakeGmailService(
-        messages={"g1": _message_full_html("g1", "<html><body><p>X</p></body></html>")},
+        messages={
+            "g1": _message_full_html(
+                "g1",
+                '<html><body><p>'
+                + ("Retry fixture padding narrative for ingest minimums enforced. " * 30)
+                + '</p>'
+                '<a href="https://learn.example/class">Register</a></body></html>',
+            ),
+        },
     )
     db = tmp_path / "db_retry.sqlite"
     repo = StateRepository(db)
     repo.upsert_email(EmailInput(message_id="g1", subject="S"))
     llm = ScriptedLLMClient(
         [
-            '{"category": "NOISE", "confidence": 0.5, "rationale": null}',
-            '{"reason": "Low value item.", "discard": true}',
+            '{"category": "COURSES", "confidence": 0.5, "rationale": null}',
+            '{"summary": "Low value teaser.", '
+            '"actions":[{"label":"Register","url":"https://learn.example/class"}],'
+            '"promo_blocks":[]}',
         ],
     )
 

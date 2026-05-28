@@ -8,10 +8,12 @@ from pydantic import ValidationError
 from app.models.digest import ProcessedEmail
 from app.models.email import EmailInput
 from app.models.outputs import (
+    CourseActionItem,
+    CoursePromoBlock,
+    CoursesOutput,
     Diagram,
     LeadershipOutput,
     LeadershipSignal,
-    NoiseOutput,
     RadarItem,
     RadarOutput,
     RouterDecision,
@@ -30,10 +32,17 @@ def test_email_input_accepts_sender() -> None:
     assert e.sender == "Bob <bob@example.com>"
 
 
+def test_router_decision_coerces_legacy_noise_category_json() -> None:
+    d = RouterDecision.model_validate_json(
+        '{"category": "NOISE", "confidence": 0.5, "rationale": null}',
+    )
+    assert d.category == RouteCategory.COURSES
+
+
 def test_router_decision_confidence_bounds() -> None:
     RouterDecision(category=RouteCategory.TECHNOLOGY, confidence=0.5)
     with pytest.raises(ValidationError):
-        RouterDecision(category=RouteCategory.NOISE, confidence=1.5)
+        RouterDecision(category=RouteCategory.COURSES, confidence=1.5)
 
 
 def test_technology_output_diagrams_and_images() -> None:
@@ -86,14 +95,47 @@ def test_radar_and_leadership_outputs() -> None:
     )
 
 
-def test_noise_output_defaults() -> None:
-    n = NoiseOutput(reason="low signal newsletter with no facts")
-    assert n.discard is True
+def test_courses_legacy_noise_json_maps_to_summary() -> None:
+    n = CoursesOutput.model_validate_json(
+        '{"reason": "low signal newsletter with no facts", "discard": true}',
+    )
+    assert "low signal newsletter" in n.summary
+    assert n.actions == []
 
 
-def test_noise_rejects_multiline_reason() -> None:
+def test_courses_multiline_legacy_reason_normally_single_line_summary() -> None:
+    """Multiline legacy ``reason`` is flattened rather than rejected."""
+
+    co = CoursesOutput.model_validate_json('{"reason": "line1\\nline2", "discard": true}')
+    assert "line1" in co.summary and "line2" in co.summary
+
+
+def test_courses_output_rejects_totally_empty() -> None:
     with pytest.raises(ValidationError):
-        NoiseOutput(reason="line1\nline2")
+        CoursesOutput(summary="", actions=[], promo_blocks=[])
+
+
+def test_courses_promo_blocks_allowlisted() -> None:
+    CoursesOutput.model_validate(
+        {
+            "summary": "",
+            "promo_blocks": [
+                {"text": "Event A", "cta": {"label": "RSVP", "url": "https://a.example/x"}},
+                {"text": "Event B", "cta": {"label": "Register", "url": "https://b.example/y"}},
+            ],
+        },
+        context={"allowed_action_urls": ["https://a.example/x", "https://b.example/y"]},
+    )
+    with pytest.raises(ValidationError):
+        CoursesOutput.model_validate(
+            {
+                "summary": "",
+                "promo_blocks": [
+                    {"text": "Ev", "cta": {"label": "x", "url": "https://evil.example/z"}},
+                ],
+            },
+            context={"allowed_action_urls": ["https://allow.example/o"]},
+        )
 
 
 def test_processed_email_digest_optional() -> None:

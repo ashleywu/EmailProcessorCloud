@@ -47,7 +47,9 @@ def test_format_gmail_config_summary_includes_allowed_fields(
     assert "GMAIL_LOOKBACK_DAYS=2" in out
     assert "AI_DIGEST_PROCESSED" in out
     assert "AI_DIGEST_ERROR" in out
-    assert "Category labels" in out
+    assert "gmail_messages_list_query_preview=" in out
+    assert "(from:a@news.example OR from:b@digest.example)" in out
+    assert "-label:" in out
     assert "https://www.googleapis.com/auth/gmail.modify" in out
     assert "https://www.googleapis.com/auth/gmail.send" in out
 
@@ -200,6 +202,7 @@ def test_format_gmail_config_summary_sender_count_when_empty(
     out = format_gmail_config_summary(settings)
     assert "NEWSLETTER_SENDERS_COUNT=0" in out
     assert "NEWSLETTER_SENDERS=(none)" in out
+    assert "skipped — NEWSLETTER_SENDERS empty" in out
 
 
 def test_build_gmail_client_forwards_paths_from_settings(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -9,12 +9,13 @@ from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.models.outputs import (
-    LeadershipOutput,
-    NoiseOutput,
+    CoursesOutput,
+    Diagram,
+    LeadershipSectionOutput,
+    LeadershipSignal,
     RadarOutput,
-    RouterDecision,
     RouteCategory,
-    TechnologyOutput,
+    TechnologySectionOutput,
 )
 from app.storage.repository import AgentOutputRecord
 
@@ -25,6 +26,88 @@ def _sender_label(senders: Mapping[int, str | None], email_id: int) -> str | Non
         return None
     s = str(raw).strip()
     return s or None
+
+
+def _parse_courses_payload(raw: str) -> CoursesOutput:
+    return CoursesOutput.model_validate_json(raw)
+
+
+def _diagram_rows(diagrams: list[Diagram]) -> list[dict[str, Any]]:
+    return [{"title": d.title, "diagram_type": d.diagram_type, "content": d.content} for d in diagrams]
+
+
+def _courses_digest_row(
+    *,
+    email_subject: str,
+    from_line: str | None,
+    section_heading: str | None,
+    m: CoursesOutput,
+) -> dict[str, Any]:
+    return {
+        "subject": email_subject,
+        "source_subject": email_subject,
+        "source_sender": from_line,
+        "section_heading": section_heading,
+        "summary": m.summary,
+        "actions": [{"label": a.label, "url": a.url} for a in m.actions],
+        "promo_blocks": [
+            {"text": b.text, "cta": {"label": b.cta.label, "url": b.cta.url}} for b in m.promo_blocks
+        ],
+    }
+
+
+def _leadership_digest_row(
+    *,
+    email_subject: str,
+    from_line: str | None,
+    section_heading: str | None,
+    signals: list[LeadershipSignal],
+    summary: str | None,
+) -> dict[str, Any]:
+    return {
+        "subject": email_subject,
+        "source_sender": from_line,
+        "section_heading": section_heading,
+        "summary": summary,
+        "signals": [
+            {
+                "theme": s.theme,
+                "insight": s.insight,
+                "actionable_item": s.actionable_item,
+                "link": s.link,
+                "source_subject": email_subject,
+                "source_sender": from_line,
+                "section_heading": section_heading,
+            }
+            for s in signals
+        ],
+    }
+
+
+def _radar_digest_row(
+    *,
+    email_subject: str,
+    from_line: str | None,
+    section_heading: str | None,
+    m: RadarOutput,
+) -> dict[str, Any]:
+    return {
+        "subject": email_subject,
+        "source_sender": from_line,
+        "section_heading": section_heading,
+        "summary": m.summary,
+        "items": [
+            {
+                "entity": it.entity,
+                "impact_or_action": it.impact_or_action,
+                "url": it.url,
+                "source_subject": email_subject,
+                "source_sender": from_line,
+                "section_heading": section_heading,
+            }
+            for it in m.items
+        ],
+    }
 
 
 def _repair_html(html: str, problems: Sequence[str]) -> str:
@@ -62,8 +145,35 @@ def _repair_html(html: str, problems: Sequence[str]) -> str:
     return out
 
 
+_KIND_ORDER_FOR_SECTION = {"technology": 10, "radar": 20, "leadership": 30, "courses": 40, "noise": 41}
+
+_PROCESSOR_KINDS = frozenset({"technology", "radar", "leadership", "courses", "noise"})
+
+
+def _valid_category_kind_pair(cat: RouteCategory, kind: str) -> bool:
+    if kind == "technology":
+        return cat == RouteCategory.TECHNOLOGY
+    if kind == "radar":
+        return cat == RouteCategory.RADAR
+    if kind == "leadership":
+        return cat == RouteCategory.LEADERSHIP
+    if kind == "courses":
+        return cat == RouteCategory.COURSES
+    if kind == "noise":
+        return cat == RouteCategory.COURSES
+    return False
+
+
+@dataclass(frozen=True, slots=True)
+class ComposeResult:
+    """Rendered digest HTML plus non-fatal composition diagnostics."""
+
+    html: str
+    composition_warnings: tuple[str, ...] = ()
+
+
 class DigestComposer:
-    """Renders digest HTML from persisted structured outputs only (no full email reread)."""
+    """Renders digest HTML from persisted **section-scoped** structured outputs."""
 
     def __init__(self, *, title: str = "Daily digest") -> None:
         self._default_title = title
@@ -80,105 +190,118 @@ class DigestComposer:
         *,
         senders: Mapping[int, str | None] | None = None,
         revision_problems: Sequence[str] = (),
-    ) -> str:
-        """Build HTML; when ``revision_problems`` is non-empty, repair the prior render."""
+    ) -> ComposeResult:
+        """Build HTML; when ``revision_problems`` is non-empty, repair the prior render.
+
+        Skipped legacy or inconsistent rows append to ``composition_warnings`` rather than
+        being rerouted silently.
+        """
 
         snd = senders or {}
-        by_email: dict[int, dict[str, str]] = defaultdict(dict)
-        for row in output_rows:
-            by_email[row.email_id][row.kind] = row.payload
+        warnings: list[str] = []
+
+        for r in output_rows:
+            if r.kind not in _PROCESSOR_KINDS:
+                continue
+            if r.email_section_id is None:
+                cat_disp = repr(r.category)
+                warnings.append(
+                    "composition_legacy_email_level_processor: "
+                    f"agent_output_id={r.id} email_id={r.email_id} "
+                    f"email_section_id=null kind={r.kind!r} category={cat_disp}",
+                )
+
+        proc_rows = [
+            row
+            for row in output_rows
+            if row.email_section_id is not None and row.kind in _PROCESSOR_KINDS
+        ]
+        proc_rows.sort(
+            key=lambda row: (
+                row.email_id,
+                row.section_order_index if row.section_order_index is not None else 2_147_483_647,
+                _KIND_ORDER_FOR_SECTION.get(row.kind, 99),
+                row.id,
+            ),
+        )
 
         technical_index: list[dict[str, Any]] = []
         ai_radar: list[dict[str, Any]] = []
         leadership_signals: list[dict[str, Any]] = []
-        filtered_noise: list[dict[str, Any]] = []
+        courses: list[dict[str, Any]] = []
 
-        for eid, kinds in sorted(by_email.items(), key=lambda x: x[0]):
-            if "router" not in kinds:
+        for row in proc_rows:
+            cat_raw = row.category
+            try:
+                cat = RouteCategory(str(cat_raw))
+            except (TypeError, ValueError):
+                warnings.append(
+                    "composition_invalid_category: "
+                    f"agent_output_id={row.id} email_id={row.email_id} "
+                    f"email_section_id={row.email_section_id} kind={row.kind!r} category={cat_raw!r}",
+                )
                 continue
-            decision = RouterDecision.model_validate_json(kinds["router"])
-            subject = subjects.get(eid)
-            from_line = _sender_label(snd, eid)
-            cat = decision.category
-            if cat == RouteCategory.TECHNOLOGY and "technology" in kinds:
-                m = TechnologyOutput.model_validate_json(kinds["technology"])
-                src = subject or f"Email #{eid}"
-                stories_out: list[dict[str, Any]] = []
-                for s in m.stories:
-                    fb = (
-                        m.digest_source_url
-                        if m.digest_source_url and m.digest_source_url != s.article_url
-                        else None
-                    )
-                    stories_out.append(
-                        {
-                            "title": s.title,
-                            "article_url": s.article_url,
-                            "summary": s.summary,
-                            "source_subject": src,
-                            "source_sender": from_line,
-                            "newsletter_original_url": fb,
-                        },
-                    )
-                row = {
-                    "subject": src,
-                    "source_sender": from_line,
-                    "digest_source_url": m.digest_source_url,
-                    "stories": stories_out,
-                    "core_pain_point": m.core_pain_point,
-                }
-                technical_index.append(row)
-            elif cat == RouteCategory.RADAR and "radar" in kinds:
-                m = RadarOutput.model_validate_json(kinds["radar"])
-                src = subject or f"Email #{eid}"
+
+            subject = subjects.get(row.email_id)
+            email_subject = subject or f"Email #{row.email_id}"
+            from_line = _sender_label(snd, row.email_id)
+            heading = row.section_heading or None
+
+            if not _valid_category_kind_pair(cat, row.kind):
+                warnings.append(
+                    "composition_category_kind_mismatch: "
+                    f"agent_output_id={row.id} email_id={row.email_id} "
+                    f"email_section_id={row.email_section_id} kind={row.kind!r} category={cat.value!r}",
+                )
+                continue
+
+            if cat == RouteCategory.TECHNOLOGY and row.kind == "technology":
+                m = TechnologySectionOutput.model_validate_json(row.payload)
+                technical_index.append(
+                    {
+                        "email_subject": email_subject,
+                        "source_sender": from_line,
+                        "section_heading": heading,
+                        "title": m.title,
+                        "article_url": m.original_url,
+                        "core_pain_point": m.core_pain_point,
+                        "diagrams": _diagram_rows(m.diagrams),
+                    },
+                )
+            elif cat == RouteCategory.RADAR and row.kind == "radar":
+                radar_m = RadarOutput.model_validate_json(row.payload)
                 ai_radar.append(
-                    {
-                        "subject": src,
-                        "source_sender": from_line,
-                        "summary": m.summary,
-                        "items": [
-                            {
-                                "entity": it.entity,
-                                "impact_or_action": it.impact_or_action,
-                                "url": it.url,
-                                "source_subject": src,
-                                "source_sender": from_line,
-                            }
-                            for it in m.items
-                        ],
-                    },
+                    _radar_digest_row(
+                        email_subject=email_subject,
+                        from_line=from_line,
+                        section_heading=heading,
+                        m=radar_m,
+                    ),
                 )
-            elif cat == RouteCategory.LEADERSHIP and "leadership" in kinds:
-                m = LeadershipOutput.model_validate_json(kinds["leadership"])
-                src = subject or f"Email #{eid}"
+            elif cat == RouteCategory.LEADERSHIP and row.kind == "leadership":
+                lm = LeadershipSectionOutput.model_validate_json(row.payload)
                 leadership_signals.append(
-                    {
-                        "subject": src,
-                        "source_sender": from_line,
-                        "summary": m.summary,
-                        "signals": [
-                            {
-                                "theme": s.theme,
-                                "insight": s.insight,
-                                "actionable_item": s.actionable_item,
-                                "link": s.link,
-                                "source_subject": src,
-                                "source_sender": from_line,
-                            }
-                            for s in m.signals
-                        ],
-                    },
+                    _leadership_digest_row(
+                        email_subject=email_subject,
+                        from_line=from_line,
+                        section_heading=heading,
+                        signals=list(lm.signals),
+                        summary=lm.summary,
+                    ),
                 )
-            elif cat == RouteCategory.NOISE and "noise" in kinds:
-                m = NoiseOutput.model_validate_json(kinds["noise"])
-                src = subject or f"Email #{eid}"
-                filtered_noise.append(
-                    {
-                        "subject": src,
-                        "source_subject": src,
-                        "source_sender": from_line,
-                        "reason": m.reason,
-                    },
+            elif cat == RouteCategory.COURSES and row.kind in ("courses", "noise"):
+                cm = (
+                    CoursesOutput.model_validate_json(row.payload)
+                    if row.kind == "courses"
+                    else _parse_courses_payload(row.payload)
+                )
+                courses.append(
+                    _courses_digest_row(
+                        email_subject=email_subject,
+                        from_line=from_line,
+                        section_heading=heading,
+                        m=cm,
+                    ),
                 )
 
         quality_notes = "; ".join(revision_problems) if revision_problems else ""
@@ -190,8 +313,8 @@ class DigestComposer:
             technical_index=technical_index,
             ai_radar=ai_radar,
             leadership_signals=leadership_signals,
-            filtered_noise=filtered_noise,
+            courses=courses,
         )
         if revision_problems:
             html = _repair_html(html, revision_problems)
-        return html
+        return ComposeResult(html=html, composition_warnings=tuple(warnings))

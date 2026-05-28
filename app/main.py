@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from app.agents.daily_digest_agent import DailyDigestAgent
 from app.agents.leadership_agent import LeadershipProcessorAgent
-from app.agents.noise_agent import NoiseProcessorAgent
+from app.agents.courses_agent import CoursesProcessorAgent
 from app.agents.radar_agent import RadarProcessorAgent
 from app.agents.router_agent import RouterAgent
 from app.agents.technology_agent import TechnologyProcessorAgent
@@ -25,6 +25,7 @@ from app.gmail.fetcher import GmailFetcher
 from app.gmail.labeler import GmailLabeler
 from app.gmail.sender import GmailSender
 from app.llm.providers.openai_provider import OpenAIProvider
+from app.storage.db import open_initialized
 from app.storage.repository import StateRepository
 
 
@@ -77,6 +78,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     pv.set_defaults(handler=_cmd_preview_digest)
 
+    clr = sub.add_parser(
+        "clear-run-lock",
+        help=(
+            "Delete the advisory run-lock row from SQLite after a crashed run-daily leaves it "
+            "behind ('Another run holds the lock'). Requires no other digest process running."
+        ),
+    )
+    clr.set_defaults(handler=_cmd_clear_run_lock)
+
     args = parser.parse_args(argv)
 
     handler = getattr(args, "handler", None)
@@ -112,10 +122,21 @@ def _cmd_run_daily(_args: argparse.Namespace) -> int:
 
     repo = StateRepository(settings.db_path, max_email_retries=settings.max_email_retries)
     try:
+        senders_cfg = settings.newsletter_senders
+        if not senders_cfg:
+            print(
+                "WARNING: NEWSLETTER_SENDERS is empty — Gmail will ingest no newsletters; "
+                "only existing SQLite rows in pending/failed (retryable) are processed. "
+                "Add real From addresses (see original email headers); use `@domain.tld` in "
+                "NEWSLETTER_SENDERS only as domain shorthand matching subdomains. "
+                "Run `python -m app.main show-config` to preview the Gmail search query.",
+                file=sys.stderr,
+            )
+
         client = build_gmail_client(settings)
         fetcher = GmailFetcher(
             client,
-            senders=list(settings.newsletter_senders),
+            senders=list(senders_cfg),
             lookback_days=settings.gmail_lookback_days,
         )
         for msg in fetcher.fetch_recent():
@@ -134,7 +155,7 @@ def _cmd_run_daily(_args: argparse.Namespace) -> int:
             technology_agent=TechnologyProcessorAgent(llm, model=llm.processor_model),
             radar_agent=RadarProcessorAgent(llm, model=llm.processor_model),
             leadership_agent=LeadershipProcessorAgent(llm, model=llm.processor_model),
-            noise_agent=NoiseProcessorAgent(llm, model=llm.processor_model),
+            courses_agent=CoursesProcessorAgent(llm, model=llm.processor_model),
             composer=DigestComposer(),
             quality_gate=DigestQualityGateAgent(),
             labeler=GmailLabeler(client),
@@ -149,6 +170,33 @@ def _cmd_run_daily(_args: argparse.Namespace) -> int:
         return 0
     finally:
         repo.close()
+
+
+def _cmd_clear_run_lock(_args: argparse.Namespace) -> int:
+    try:
+        settings = load_settings()
+    except ValidationError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 1
+
+    conn = open_initialized(settings.db_path)
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM run_locks WHERE lock_name = ?",
+            (settings.lock_name,),
+        ).fetchone()
+        conn.execute(
+            "DELETE FROM run_locks WHERE lock_name = ?",
+            (settings.lock_name,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    if row is None:
+        print(f"No run-lock row for lock_name={settings.lock_name!r} — nothing to do.")
+        return 0
+    print(f"Cleared run lock {settings.lock_name!r}.")
+    return 0
 
 
 def _cmd_preview_digest(args: argparse.Namespace) -> int:

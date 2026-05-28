@@ -25,25 +25,25 @@
 {% if technical_index %}
   {% for it in technical_index %}
   <div class="item">
-    <div><strong>{{ it.subject | e }}</strong></div>
+    {% if it.section_heading %}<div class="sub"><strong>{{ it.section_heading | e }}</strong></div>{% endif %}
+    <div><strong>{{ it.email_subject | e }}</strong></div>
     {% if it.source_sender %}<div class="sub">From: {{ it.source_sender | e }}</div>{% endif %}
-    {% if it.stories %}
-      {% for story in it.stories %}
+    {% if it.title %}
       <div class="story-block">
-        <div><a href="{{ story.article_url | e }}">{{ story.title | e }}</a></div>
-        <div>{{ story.summary | e }}</div>
-        <div class="sub">Source: {{ story.source_subject | e }}{% if story.source_sender %} · From: {{ story.source_sender | e }}{% endif %}</div>
-        {% if story.newsletter_original_url %}
-        <div class="sub"><a href="{{ story.newsletter_original_url | e }}">Newsletter web version</a></div>
+        {% if it.article_url %}
+          <div><a href="{{ it.article_url | e }}">{{ it.title | e }}</a></div>
+        {% else %}
+          <div>{{ it.title | e }}</div>
         {% endif %}
+        <div>{{ it.core_pain_point | e }}</div>
       </div>
+    {% endif %}
+    {% if it.diagrams %}
+      {% for dg in it.diagrams %}
+        <pre class="sub">{{ dg.diagram_type | e }} · {{ dg.title | e }}
+
+{{ dg.content | e }}</pre>
       {% endfor %}
-    {% elif it.core_pain_point %}
-      <div>{{ it.core_pain_point | e }}</div>
-      {% if it.digest_source_url %}
-      <div class="sub"><a href="{{ it.digest_source_url | e }}">Web version</a></div>
-      {% endif %}
-      <div class="sub">Source: {{ it.subject | e }}{% if it.source_sender %} · From: {{ it.source_sender | e }}{% endif %}</div>
     {% endif %}
   </div>
   {% endfor %}
@@ -55,6 +55,7 @@
 {% if ai_radar %}
   {% for it in ai_radar %}
   <div class="item">
+    {% if it.section_heading %}<div class="sub"><strong>{{ it.section_heading | e }}</strong></div>{% endif %}
     <div><strong>{{ it.subject | e }}</strong></div>
     {% if it.source_sender %}<div class="sub">From: {{ it.source_sender | e }}</div>{% endif %}
     {% if it.summary %}<div class="sub">{{ it.summary | e }}</div>{% endif %}
@@ -73,6 +74,7 @@
 {% if leadership_signals %}
   {% for it in leadership_signals %}
   <div class="item">
+    {% if it.section_heading %}<div class="sub"><strong>{{ it.section_heading | e }}</strong></div>{% endif %}
     <div><strong>{{ it.subject | e }}</strong></div>
     {% if it.source_sender %}<div class="sub">From: {{ it.source_sender | e }}</div>{% endif %}
     {% if it.summary %}<div class="sub">{{ it.summary | e }}</div>{% endif %}
@@ -87,12 +89,44 @@
   <p class="sub">No items in this section.</p>
 {% endif %}
 
-<h2>Filtered Noise</h2>
-{% if filtered_noise %}
-  {% for it in filtered_noise %}
+<h2>Courses &amp; Promotions</h2>
+{% if courses %}
+  {% for it in courses %}
   <div class="item">
-    <div class="sub">Source: {{ it.source_subject | e }}{% if it.source_sender %} · From: {{ it.source_sender | e }}{% endif %}</div>
-    <div>{{ it.reason | e }}</div>
+    {% if it.section_heading %}<div class="sub"><strong>{{ it.section_heading | e }}</strong></div>{% endif %}
+    {% if it.subject %}<div><strong>{{ it.subject | e }}</strong></div>{% endif %}
+    {% if it.source_sender %}<div class="sub">From: {{ it.source_sender | e }}</div>{% endif %}
+    <div class="sub">Source: {{ it.source_subject | e }}</div>
+    {% if it.promo_blocks %}
+      {% if (it.summary or '').strip() %}
+        {% for line in (it.summary or '').splitlines() %}
+          {% if line %}<p>{{ line | e }}</p>{% endif %}
+        {% endfor %}
+      {% endif %}
+      <ul class="actions">
+        {% for block in it.promo_blocks %}
+        <li>{{ block.text | e }} (<a href="{{ block.cta.url | e }}">{{ block.cta.label | e }}</a>)</li>
+        {% endfor %}
+      </ul>
+      {% if it.actions %}
+      <ul class="actions">
+        {% for a in it.actions %}
+        <li><a href="{{ a.url | e }}">{{ a.label | e }}</a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    {% else %}
+    {% for line in (it.summary or '').splitlines() %}
+      {% if line %}<p>{{ line | e }}</p>{% endif %}
+    {% endfor %}
+    {% if it.actions %}
+    <ul class="actions">
+      {% for a in it.actions %}
+      <li><a href="{{ a.url | e }}">{{ a.label | e }}</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% endif %}
   </div>
   {% endfor %}
 {% else %}

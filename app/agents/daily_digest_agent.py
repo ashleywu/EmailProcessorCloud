@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
+from app.agents.courses_agent import CoursesProcessorAgent
 from app.agents.leadership_agent import LeadershipProcessorAgent
-from app.agents.noise_agent import NoiseProcessorAgent
 from app.agents.radar_agent import RadarProcessorAgent
 from app.agents.router_agent import RouterAgent
 from app.agents.technology_agent import TechnologyProcessorAgent
@@ -11,11 +12,13 @@ from app.digest.composer import DigestComposer
 from app.digest.exceptions import QualityGateFailedException
 from app.digest.quality_gate import DigestQualityGateAgent
 from app.gmail.fetcher import GmailFetcher
-from app.gmail.labeler import GmailLabeler
+from app.gmail.labeler import INBOX_LABEL, PROCESSED_LABEL, GmailLabeler
 from app.gmail.sender import GmailSender
-from app.models.outputs import PROCESSOR_OUTPUT_KIND, RouteCategory
+from app.models.outputs import PROCESSOR_OUTPUT_KIND, RouterDecision, RouteCategory
+from app.models.section import EmailSection
 from app.parsing.parser import parse_newsletter_html
-from app.storage.repository import StateRepository
+from app.parsing.section_caps import normalize_sections_for_routing
+from app.storage.repository import EmailSectionRecord, StateRepository
 from app.storage.run_lock import RunLock
 
 DIGEST_STATUS_DRAFT = "draft"
@@ -24,9 +27,13 @@ DIGEST_STATUS_EMPTY = "empty"
 DIGEST_STATUS_ERROR = "error"
 DIGEST_STATUS_SEND_FAILED = "send_failed"
 
+_LOGGER = logging.getLogger(__name__)
+
+ProcessLink = tuple[int, str, frozenset[RouteCategory]]
+
 
 class DailyDigestAgent:
-    """Orchestrates fetch → parse → route → processors → compose → quality gate → send → label/archive."""
+    """Orchestrates fetch → parse → section caps → route → processors → compose → gate → send → label/archive."""
 
     def __init__(
         self,
@@ -38,7 +45,7 @@ class DailyDigestAgent:
         technology_agent: TechnologyProcessorAgent,
         radar_agent: RadarProcessorAgent,
         leadership_agent: LeadershipProcessorAgent,
-        noise_agent: NoiseProcessorAgent,
+        courses_agent: CoursesProcessorAgent,
         composer: DigestComposer,
         quality_gate: DigestQualityGateAgent,
         labeler: GmailLabeler,
@@ -55,7 +62,7 @@ class DailyDigestAgent:
         self._technology = technology_agent
         self._radar = radar_agent
         self._leadership = leadership_agent
-        self._noise = noise_agent
+        self._courses = courses_agent
         self._composer = composer
         self._quality_gate = quality_gate
         self._labeler = labeler
@@ -76,7 +83,7 @@ class DailyDigestAgent:
         if not acquired:
             return False
         digest_id: int | None = None
-        success_links: list[tuple[int, str, RouteCategory]] = []
+        success_links: list[ProcessLink] = []
         try:
             candidates = self._merge_candidates()
             if not candidates:
@@ -128,9 +135,12 @@ class DailyDigestAgent:
                 return True
 
             self._repo.update_digest_status(digest_id, DIGEST_STATUS_SENT)
-            for email_id, message_id, category in success_links:
-                self._labeler.mark_processed(message_id)
-                self._labeler.archive(message_id)
+            for email_id, message_id, _categories in success_links:
+                self._labeler.add_labels(
+                    message_id,
+                    [PROCESSED_LABEL],
+                    remove=[INBOX_LABEL],
+                )
                 self._repo.update_email_status(email_id, "archived")
 
             return True
@@ -160,7 +170,7 @@ class DailyDigestAgent:
         email_id: int,
         message_id: str,
         digest_id: int,
-    ) -> tuple[int, str, RouteCategory] | None:
+    ) -> ProcessLink | None:
         reuse = self._repo.try_reuse_complete_outputs(email_id)
         if reuse is not None:
             self._repo.attach_email_to_digest(digest_id, email_id)
@@ -169,20 +179,69 @@ class DailyDigestAgent:
             html = self._fetcher.fetch_message_html(message_id)
             parsed = parse_newsletter_html(html)
             subject = self._repo.get_email_subject_by_id(email_id)
-            decision = self._router.run(subject=subject, plain_text=parsed.plain_text)
-            self._repo.save_agent_output(email_id, "router", decision)
-            proc_kind = PROCESSOR_OUTPUT_KIND[decision.category]
-            if decision.category == RouteCategory.TECHNOLOGY:
-                proc_out = self._technology.run(parsed, subject=subject)
-            elif decision.category == RouteCategory.RADAR:
-                proc_out = self._radar.run(subject=subject, plain_text=parsed.plain_text)
-            elif decision.category == RouteCategory.LEADERSHIP:
-                proc_out = self._leadership.run(subject=subject, plain_text=parsed.plain_text)
-            else:
-                proc_out = self._noise.run(subject=subject, plain_text=parsed.plain_text)
-            self._repo.save_agent_output(email_id, proc_kind, proc_out)
+
+            merged_sections = normalize_sections_for_routing(parsed)
+            section_records = self._repo.replace_email_sections(email_id, merged_sections)
+            by_key: dict[str, EmailSection] = {s.section_id.strip(): s for s in merged_sections}
+
+            categories: set[RouteCategory] = set()
+
+            for sr in sorted(section_records, key=lambda r: (r.order_index, r.id)):
+                sec = by_key.get(sr.section_key)
+                if sec is None:
+                    raise RuntimeError(f"section_key {sr.section_key!r} missing from merged sections")
+
+                if self._reuse_section_processor_if_cached(email_id, sr):
+                    cats = self._load_cached_router_category(email_id, sr.id)
+                    if cats is None:
+                        raise RuntimeError("cached processors without router slice")
+                    categories.add(cats)
+                    continue
+
+                decision = self._router.run(subject=subject, plain_text=sec.text, section_heading=sec.heading)
+                self._repo.save_agent_output(
+                    email_id,
+                    "router",
+                    decision,
+                    email_section_id=sr.id,
+                    category=decision.category.value,
+                )
+
+                proc_kind = PROCESSOR_OUTPUT_KIND[decision.category]
+                if decision.category == RouteCategory.TECHNOLOGY:
+                    proc_out = self._technology.run_section(
+                        sec,
+                        subject=subject,
+                        parsed_fallback=parsed,
+                    )
+                elif decision.category == RouteCategory.RADAR:
+                    proc_out = self._radar.run_section(sec, subject=subject)
+                elif decision.category == RouteCategory.LEADERSHIP:
+                    proc_out = self._leadership.run_section(
+                        sec,
+                        subject=subject,
+                        parsed_fallback=parsed,
+                    )
+                elif decision.category == RouteCategory.COURSES:
+                    proc_out = self._courses.run_section(
+                        sec,
+                        subject=subject,
+                        parsed_fallback=parsed,
+                    )
+                else:
+                    raise AssertionError(f"unexpected router category: {decision.category!r}")
+
+                self._repo.save_agent_output(
+                    email_id,
+                    proc_kind,
+                    proc_out,
+                    email_section_id=sr.id,
+                    category=decision.category.value,
+                )
+                categories.add(decision.category)
+
             self._repo.attach_email_to_digest(digest_id, email_id)
-            return (email_id, message_id, decision.category)
+            return (email_id, message_id, frozenset(categories))
         except Exception as exc:
             self._repo.update_email_status(
                 email_id,
@@ -192,8 +251,64 @@ class DailyDigestAgent:
             )
             return None
 
+    def _reuse_section_processor_if_cached(self, email_id: int, sr: EmailSectionRecord) -> bool:
+        """Skip LLM when router + processor rows already exist for this DB section id."""
+
+        router_row = self._repo.get_latest_agent_output_for_section_kind(
+            email_id,
+            section_id=sr.id,
+            kind="router",
+        )
+        if router_row is None:
+            return False
+        try:
+            decision = RouterDecision.model_validate_json(router_row.payload)
+        except Exception:
+            return False
+        proc_kind = PROCESSOR_OUTPUT_KIND[decision.category]
+        proc_row = self._repo.get_latest_agent_output_for_section_kind(
+            email_id,
+            section_id=sr.id,
+            kind=proc_kind,
+        )
+        if proc_row is None and decision.category == RouteCategory.COURSES:
+            proc_row = self._repo.get_latest_agent_output_for_section_kind(
+                email_id,
+                section_id=sr.id,
+                kind="noise",
+            )
+        return proc_row is not None
+
+    def _load_cached_router_category(self, email_id: int, section_id: int) -> RouteCategory | None:
+        row = self._repo.get_latest_agent_output_for_section_kind(
+            email_id,
+            section_id=section_id,
+            kind="router",
+        )
+        if row is None:
+            return None
+        try:
+            return RouterDecision.model_validate_json(row.payload).category
+        except Exception:
+            return None
+
     def _compose_with_quality_gate(self, rows, subjects, senders):
-        html = self._composer.compose(rows, subjects, senders=senders, revision_problems=())
+        logged_comp_warnings: set[str] = set()
+
+        def render(revision_problems):
+            compose_out = self._composer.compose(
+                rows,
+                subjects,
+                senders=senders,
+                revision_problems=revision_problems,
+            )
+            for msg in compose_out.composition_warnings:
+                if msg not in logged_comp_warnings:
+                    logged_comp_warnings.add(msg)
+                    _LOGGER.warning("%s", msg)
+            return compose_out.html
+
+        html = render(())
         max_attempts = self._max_quality_gate_attempts
         for attempt in range(max_attempts):
             result = self._quality_gate.check(html)
@@ -202,4 +317,5 @@ class DailyDigestAgent:
             problems = list(result.problems)
             if attempt >= max_attempts - 1:
                 raise QualityGateFailedException(problems, last_html=html)
-            html = self._composer.compose(rows, subjects, senders=senders, revision_problems=problems)
+            html = render(problems)
+        return html

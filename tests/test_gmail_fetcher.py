@@ -29,6 +29,13 @@ def test_build_query_includes_each_sender_with_or() -> None:
     assert "(from:a@x.com OR from:b@y.com)" in q
 
 
+def test_build_query_domain_shorthand_after_prefix() -> None:
+    """Leading ``@domain`` matches visible senders on that mail domain."""
+
+    q = build_query(["@example.org"], lookback_days=2, now=FIXED_NOW)
+    assert "from:(example.org)" in q
+
+
 def test_build_query_excludes_processed_and_error_labels() -> None:
     q = build_query(["a@x.com"], lookback_days=2, now=FIXED_NOW)
     assert f"-label:{PROCESSED_LABEL}" in q

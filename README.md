@@ -2,7 +2,7 @@
 
 - **Milestone 1**: project skeleton, configuration, Pydantic models, SQLite storage, `StateRepository`, run lock.
 - **Milestone 2**: Gmail integration layer (`app/gmail/`) — `GmailClient`, `GmailFetcher`, `GmailLabeler`, `GmailSender`. Use `build_gmail_client(load_settings())` so OAuth paths stay centralized. All collaborators are mockable; tests run without network or real credentials.
-- **Milestone 3–5**: parsing, LLM agents, daily digest orchestration, HTML composer, quality gate (see `milestone5.md`).
+- **Milestone 3–5**: parsing (including **DOM sections** capped/merged via `normalize_sections_for_routing`), LLM **`RouterAgent` + section-scoped processors** (`run_section`), **`DailyDigestAgent`**, **`DigestComposer`**, quality gate (see **`milestone5.md`**); section invariants + **testing guidance for mocks** → **`docs/section-extraction.md`**.
 - **Milestone 6**: CLI (`run-daily`, `preview-digest`, `show-config`), `pydantic-settings` loading, end-to-end docs (see `milestone6.md`).
 - **Milestone 7**: VPS deployment (`scripts/run-daily.sh`, `docs/deploy-vps.md` — checklist `milestone7.md`).
 
@@ -43,6 +43,20 @@ python -m app.main preview-digest --date YYYY-MM-DD -o preview.html
 - **`preview-digest`**: Read-only: prints the latest digest HTML for the given **UTC** calendar day from SQLite. Does **not** send mail or call Gmail. Details for missing rows or empty HTML are in `--help`; failures use stderr and a non-zero exit code.
 - **`show-config`**: Safe summary for Cron/cloud debugging; secrets are masked.
 
+## Troubleshooting: a newsletter never shows up / is “never processed”
+
+There is **no sender-specific blacklist** in code: if something disappears, Gmail ingest usually filtered it **before** SQLite.
+
+Check in order:
+
+1. **`NEWSLETTER_SENDERS`** must include that sender (`show-config` prints the literal list and a **`gmail_messages_list_query_preview`** — paste that string into Gmail’s search box to verify hits). Optionally use **`@publisher.com`** (leading `@`) as domain shorthand when the ESP rotates subdomains; see **`NEWSLETTER_SENDERS`** in `.env.example` and **`build_query`** / **`_sender_search_fragment`** in `app/gmail/fetcher.py`.
+2. **`GMAIL_LOOKBACK_DAYS`** — mails **older than** the sliding `after:<epoch>` window are **never listed** again; widen lookback briefly or manually re-touch the mail so it falls in-window.
+3. **Labels** `-label:AI_DIGEST_PROCESSED` — if a message already has that label from a prior run, it **will not appear** in the ingest query until you remove it.
+4. **Spam** — **`includeSpamTrash` is false**; newsletters in Spam/Trash are skipped.
+5. **Empty sender list** — `run-daily` prints a **stderr WARNING** when `NEWSLETTER_SENDERS` is unset; ingest returns nothing useful.
+
+Open the problematic message → **Show original** / headers and paste the **`From:`** line into **`NEWSLETTER_SENDERS`**.
+
 ## Scheduled daily run (Windows)
 
 To run **`run-daily`** automatically every day at **5:00 PM** (your PC’s local clock) without opening a terminal:
@@ -69,7 +83,7 @@ The task runs **in your Windows user context** (typical when creating tasks with
 
 ## Scheduled daily run (Ubuntu VPS)
 
-Lightsail-style flow: **`ubuntu`** user, layout under **`~/daily-digest/`**, invoking **`scripts/run-daily.sh`** from **`cron`**. Full steps (absolute `.env paths`, **`scp`** for secrets, OAuth **`token.json` upload, **`CRON_TZ=America/Los_Angeles`**) live in [`docs/deploy-vps.md`](docs/deploy-vps.md).
+Lightsail-style flow: **`ubuntu`** user, layout under **`~/daily-digest/`**, invoking **`scripts/run-daily.sh`** from **`cron`**. On a typical UTC VPS, **`0 17 * * *`** runs at **17:00 UTC** (~**10:00 AM Pacific** during PDT) — full steps live in [`docs/deploy-vps.md`](docs/deploy-vps.md).
 
 ## Tests
 
@@ -78,6 +92,8 @@ python -m pytest
 ```
 
 Tests use fakes and mocks (`GmailClient(service_factory=...)`, patched Gmail in CLI tests where needed). No real credentials required.
+
+Digest/orchestration coverage includes **`tests/test_milestone5_daily_digest.py`** (send/QA/run-lock/skips); **`tests/test_step5_section_digest_integration.py`** (section routing: mock **`RouterAgent.run`** from stable keys such as **`section_heading`** — never list-queue **`side_effect` across retries** when a failing run skips later sections; details in **`docs/section-extraction.md`** § *Testing section routing across retries*); repository/compose helpers under **`tests/test_repository_sections.py`**, **`tests/test_step3_section_digest.py`**, **`tests/test_composer_*.py`**, etc.
 
 ## Development milestone workflow
 

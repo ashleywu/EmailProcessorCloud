@@ -18,6 +18,8 @@ def _client_with(service: FakeGmailService) -> GmailClient:
 
 def test_category_label_name_uses_prefix() -> None:
     assert category_label_name(RouteCategory.TECHNOLOGY) == "AI_DIGEST/TECHNOLOGY"
+    assert category_label_name(RouteCategory.COURSES) == "AI_DIGEST/COURSES"
+    assert category_label_name("NOISE") == "AI_DIGEST/COURSES"
     assert category_label_name("RADAR") == "AI_DIGEST/RADAR"
 
 
@@ -93,6 +95,20 @@ def test_add_category_creates_and_applies_label() -> None:
     label_id = service.labels["AI_DIGEST/TECHNOLOGY"]
     assert label_id in service.message_labels["m1"]
     assert INBOX_LABEL in service.message_labels["m1"]
+
+
+def test_add_labels_batches_multiple_digest_categories() -> None:
+    service = FakeGmailService(
+        messages={"m1": make_message(msg_id="m1", label_ids=["INBOX"])},
+    )
+    labeler = GmailLabeler(_client_with(service))
+
+    cats = sorted(
+        [category_label_name(RouteCategory.TECHNOLOGY), category_label_name(RouteCategory.RADAR)],
+    )
+    labeler.add_labels("m1", cats)
+    for name in cats:
+        assert service.labels[name] in service.message_labels["m1"]
 
 
 def test_add_labels_with_explicit_remove_supports_archive_combo() -> None:

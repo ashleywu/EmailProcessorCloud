@@ -17,7 +17,7 @@ Refactor Pydantic models so runtime JSON from the LLM matches the shapes below. 
 
 ### 1. `RouteCategory` (unchanged values)
 
-`TECHNOLOGY` | `RADAR` | `LEADERSHIP` | `NOISE`
+`TECHNOLOGY` | `RADAR` | `LEADERSHIP` | `COURSES`
 
 ### 2. `RouterDecision`
 
@@ -164,4 +164,4 @@ Each agent holds the loaded prompt text and invokes `llm.structured_output` with
 - `TechnologyProcessorAgent` supplies `allowed_image_urls` from `ParsedHtmlResult.image_urls` so `selected_image_urls` is validated as a subset.
 - Full test suite passes without calling the live OpenAI API (mocks / `ScriptedLLMClient`).
 
-Later milestones add digest HTML, quality gates, and Gmail side effects on top of these blocks; see `milestone5.md` for orchestration details.
+Later milestones add **`DailyDigestAgent`**, **`DigestComposer`**, and Gmail orchestration (**`milestone5.md`**). **`RouterAgent`** + processor **`run_section`** paths persist **`TechnologySectionOutput`**, **`RadarOutput`**, **`LeadershipSectionOutput`**, and **`CoursesOutput`** per **`email_sections`** row; **`TechnologyOutput`** and whole-email **`run()`** payloads remain primarily for migration/legacy ingestion.

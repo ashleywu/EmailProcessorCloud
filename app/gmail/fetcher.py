@@ -39,6 +39,30 @@ class GmailMessage:
         )
 
 
+def _sender_search_fragment(spec: str) -> str:
+    """Map one ``NEWSLETTER_SENDERS`` entry into a Gmail ``from`` sub-query.
+
+    - Full address ``news@publisher.com`` → ``from:news@publisher.com`` (Gmail semantics).
+    - Domain shorthand ``@publisher.com`` (exactly one ``@``, at start) matches visible senders
+      whose addresses contain that domain segment—useful when the ESP rotates subdomains
+      (for example ``alerts-bounces@notifications.publisher.com``).
+
+    Unexpected multi-``@`` values are treated as literals and passed through with a
+    single ``from:`` prefix; fix your ``.env`` if Gmail returns no hits.
+    """
+
+    raw = spec.strip()
+    if not raw:
+        raise ValueError("sender spec must not be empty")
+    if raw.startswith("@") and raw.count("@") == 1:
+        domain = raw[1:].strip().lower()
+        if not domain or any(c.isspace() for c in domain):
+            raise ValueError(f"invalid domain shorthand after '@': {spec!r}")
+        # Gmail phrase-style match on whatever appears in From (helps subdomains).
+        return f"from:({domain})"
+    return f"from:{raw}"
+
+
 def build_query(
     senders: Sequence[str],
     *,
@@ -49,7 +73,7 @@ def build_query(
     """Construct a Gmail search query for the configured senders.
 
     The query intentionally:
-    - groups senders with OR so any of them matches,
+    - groups sender fragments with ``OR`` so any of them matches,
     - uses ``after:`` with an absolute epoch (deterministic, unlike
       ``newer_than`` which depends on Gmail's clock),
     - excludes the processed/error labels so re-runs are idempotent,
@@ -66,8 +90,8 @@ def build_query(
     now = now or datetime.now(timezone.utc)
     after_ts = int((now - timedelta(days=lookback_days)).timestamp())
 
-    sender_clause = " OR ".join(f"from:{s}" for s in senders)
-    parts = [f"({sender_clause})", f"after:{after_ts}"]
+    inner = " OR ".join(_sender_search_fragment(s) for s in senders)
+    parts = [f"({inner})", f"after:{after_ts}"]
     parts.extend(f"-label:{label}" for label in exclude_labels)
     return " ".join(parts)
 

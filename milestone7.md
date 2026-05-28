@@ -22,7 +22,7 @@ The doc **must** cover:
 | **Ubuntu setup** | `apt` packages: `git`, `python3`, `python3-venv`, `python3-pip`; Python **≥ 3.11**. |
 | **Virtualenv** | Create **`.venv` inside `~/daily-digest/repo`**, **not** the parent `~/daily-digest/` folder; `pip install -e ".[gmail]"`. |
 | **File placement** | Explicit **absolute paths** for **`.env`**, **`credentials.json`**, **`token.json`**, **`daily_digest.db`** — see cheat sheet table in the doc. |
-| **Cron** | Example with **`CRON_TZ=America/Los_Angeles`** and **`0 17 * * *`** (**5:00 PM** America/Los_Angeles — PST/PDT handled automatically). |
+| **Cron** | Example **`0 17 * * *`** on a UTC VPS (**17:00 UTC**, ~**10:00 AM Pacific** during PDT). Document that **Debian/Ubuntu cron ignores `CRON_TZ` for scheduling** — hours are interpreted in the system timezone (`man 5 crontab`). |
 | **OAuth** | **First consent on a workstation with a browser**; then **`scp`** **`token.json`** to **`GMAIL_TOKEN_PATH`** on the VPS. Headless VPS is not sufficient for initial consent. |
 | **Refresh failures** | **`invalid_grant`** / revoked refresh token → re-auth locally → new **`token.json`** → re-upload; note **`GmailClient`** clears stale **`token.json`** on **`RefreshError`** then expects interactive flow **on machines that support it**. |
 | **Logs** | Where **`cron`** appends (**`~/daily-digest/logs/cron.log`**), where **`run-daily.sh`** appends (**`repo/logs/run-daily-YYYY-MM.log`**), and **`tail`** examples. |
