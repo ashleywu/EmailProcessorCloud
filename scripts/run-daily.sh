@@ -7,6 +7,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
+# Cron invokes this path directly; ensure executable after git checkout/reset (mode may be 644).
+chmod +x "${BASH_SOURCE[0]}" 2>/dev/null || true
+
+if [[ ! -f "${REPO_ROOT}/app/main.py" ]]; then
+  echo "error: missing ${REPO_ROOT}/app/main.py — run: git fetch origin && git reset --hard origin/main" | tee -a "${REPO_ROOT}/logs/run-daily-$(date +%Y-%m).log" >&2
+  exit 1
+fi
+
 mkdir -p "${REPO_ROOT}/logs"
 log_file="${REPO_ROOT}/logs/run-daily-$(date +%Y-%m).log"
 

@@ -23,11 +23,13 @@ from app.agents.leadership_agent import LeadershipProcessorAgent
 from app.agents.radar_agent import RadarProcessorAgent
 from app.agents.router_agent import RouterAgent
 from app.agents.technology_agent import TechnologyProcessorAgent
+from app.agents.ainews_radar_map_reduce_agent import AINewsRadarMapReduceAgent
 from app.digest.composer import DigestComposer
 from app.digest.quality_gate import DigestQualityGateAgent
 from app.gmail.client import GmailClient
 from app.gmail.fetcher import GmailFetcher
 from app.gmail.labeler import GmailLabeler, PROCESSED_LABEL
+from app.gmail.sender import GmailSender
 from app.gmail.sender import GmailSender
 from app.models.email import EmailInput
 from app.models.section import EmailSection
@@ -45,6 +47,7 @@ from app.models.outputs import (
 from app.storage.repository import StateRepository
 from app.storage.run_lock import RunLock
 from tests.fakes import FakeGmailService, FakeHttpError, make_message
+from tests.fakes.llm import ScriptedLLMClient
 from tests.test_milestone5_daily_digest import _b64url, _message_full_html
 
 
@@ -96,6 +99,7 @@ def _agent_with_deps(
     repo: StateRepository,
     lock: RunLock,
     svc: FakeGmailService,
+    llm: ScriptedLLMClient,
     *,
     router: RouterAgent,
     technology_agent: TechnologyProcessorAgent,
@@ -118,6 +122,8 @@ def _agent_with_deps(
         radar_agent=radar_agent,
         leadership_agent=leadership_agent,
         courses_agent=courses_agent,
+        map_reduce_radar_agent=AINewsRadarMapReduceAgent(llm, model="m"),
+        map_reduce_radar_senders=(),
         composer=DigestComposer(title="Test digest"),
         quality_gate=gate or DigestQualityGateAgent(),
         labeler=GmailLabeler(client),
@@ -178,6 +184,7 @@ def test_four_sections_four_categories_in_final_digest_html(tmp_path) -> None:
         repo,
         lock,
         svc,
+        ScriptedLLMClient([]),
         router=router,
         technology_agent=tech,
         radar_agent=radar,
@@ -243,6 +250,7 @@ def test_section_processor_failure_entire_mail_excluded_from_digest(tmp_path) ->
         repo,
         RunLock(db),
         svc,
+        ScriptedLLMClient([]),
         router=router,
         technology_agent=tech,
         radar_agent=radar,
@@ -298,6 +306,7 @@ def test_send_failure_skips_processed_label_and_archive(tmp_path) -> None:
         repo,
         RunLock(tmp_path / "sf5.sqlite"),
         svc,
+        ScriptedLLMClient([]),
         router=router,
         technology_agent=tech,
         radar_agent=radar,
@@ -379,6 +388,7 @@ def test_retry_after_section_processor_error_reuses_llm_through_section_cache(tm
         repo,
         lock,
         svc,
+        ScriptedLLMClient([]),
         router=router,
         technology_agent=tech,
         radar_agent=radar,
@@ -457,6 +467,7 @@ def test_second_run_daily_does_not_refetch_processed_archived_mail(tmp_path) -> 
         repo,
         RunLock(db),
         svc,
+        ScriptedLLMClient([]),
         router=router,
         technology_agent=tech,
         radar_agent=radar,

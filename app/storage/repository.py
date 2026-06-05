@@ -12,7 +12,12 @@ from pydantic import BaseModel
 
 from app.models.digest import ProcessedEmail
 from app.models.email import EmailInput
-from app.models.outputs import PROCESSOR_OUTPUT_KIND, RouterDecision, RouteCategory
+from app.models.outputs import (
+    MAP_REDUCE_RADAR_DIGEST_KIND,
+    PROCESSOR_OUTPUT_KIND,
+    RouterDecision,
+    RouteCategory,
+)
 from app.models.section import EmailSection
 from app.parsing.section_caps import compute_section_content_hash
 from app.storage.db import init_schema, open_initialized
@@ -321,6 +326,26 @@ class StateRepository:
         ).fetchone()
         return _row_to_agent_output(row) if row is not None else None
 
+    def clear_section_scoped_agent_outputs(self, email_id: int) -> None:
+        """Remove per-section router/processor rows (map-reduce reprocess)."""
+
+        self._conn.execute(
+            "DELETE FROM agent_outputs WHERE email_id = ? AND email_section_id IS NOT NULL",
+            (email_id,),
+        )
+        self._conn.commit()
+
+    def map_reduce_radar_digest_cached(self, email_id: int) -> bool:
+        row = self._conn.execute(
+            """
+            SELECT id FROM agent_outputs
+            WHERE email_id = ? AND kind = ? AND email_section_id IS NULL
+            ORDER BY id DESC LIMIT 1
+            """,
+            (email_id, MAP_REDUCE_RADAR_DIGEST_KIND),
+        ).fetchone()
+        return row is not None
+
     def section_pipeline_outputs_cached(self, email_id: int) -> bool:
         """``True`` when every stored section row has a fresh router decision + processor JSON."""
 
@@ -519,8 +544,10 @@ class StateRepository:
         return self.get_latest_outputs_by_email_ids(email_ids)
 
     def try_reuse_complete_outputs(self, email_id: int) -> frozenset[RouteCategory] | None:
-        """Reuse persisted per-section outputs when every slice still has router + processor JSON."""
+        """Reuse persisted outputs when complete for the active pipeline shape."""
 
+        if self.map_reduce_radar_digest_cached(email_id):
+            return frozenset({RouteCategory.RADAR})
         if not self.section_pipeline_outputs_cached(email_id):
             return None
         return self.router_categories_cached_for_sections(email_id)

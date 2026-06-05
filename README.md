@@ -2,8 +2,10 @@
 
 - **Milestone 1**: project skeleton, configuration, Pydantic models, SQLite storage, `StateRepository`, run lock.
 - **Milestone 2**: Gmail integration layer (`app/gmail/`) — `GmailClient`, `GmailFetcher`, `GmailLabeler`, `GmailSender`. Use `build_gmail_client(load_settings())` so OAuth paths stay centralized. All collaborators are mockable; tests run without network or real credentials.
-- **Milestone 3–5**: parsing (including **DOM sections** capped/merged via `normalize_sections_for_routing`), LLM **`RouterAgent` + section-scoped processors** (`run_section`), **`DailyDigestAgent`**, **`DigestComposer`**, quality gate (see **`milestone5.md`**); section invariants + **testing guidance for mocks** → **`docs/section-extraction.md`**.
-- **Milestone 6**: CLI (`run-daily`, `preview-digest`, `show-config`), `pydantic-settings` loading, end-to-end docs (see `milestone6.md`).
+- **Milestone 3–5**: parsing (including **DOM sections** capped/merged via `normalize_sections_for_routing`), LLM **`RouterAgent` + section-scoped processors** (`run_section`), **`DailyDigestAgent`**, **`DigestComposer`**, quality gate (see **`milestone5.md`**).
+- **AINews / long Radar senders**: addresses in **`DAILY_DIGEST_MAP_REDUCE_RADAR_SENDERS`** bypass the section router and produce **`ainews_radar_digest`** under **AI Radar** only. See **`docs/map-reduce-radar-design.md`**.
+- **Content-unit routing (Phase 6 — design, not wired)**: group → **`ContentUnitClassifierAgent`** → extract-only processors; **`RouterAgent`** remains **fallback only** (Option B). Policies §1–§10 in **`docs/content-unit-classifiers.md`**; architecture **`docs/content-unit-routing-design.md`**; implementation checklist **`milestone8-content-unit-routing.md`**.
+- **Milestone 6**: CLI (`run-daily`, `preview-digest`, `show-config`), `pydantic-settings` loading (see `milestone6.md`).
 - **Milestone 7**: VPS deployment (`scripts/run-daily.sh`, `docs/deploy-vps.md` — checklist `milestone7.md`).
 
 ## Setup
@@ -93,11 +95,11 @@ python -m pytest
 
 Tests use fakes and mocks (`GmailClient(service_factory=...)`, patched Gmail in CLI tests where needed). No real credentials required.
 
-Digest/orchestration coverage includes **`tests/test_milestone5_daily_digest.py`** (send/QA/run-lock/skips); **`tests/test_step5_section_digest_integration.py`** (section routing: mock **`RouterAgent.run`** from stable keys such as **`section_heading`** — never list-queue **`side_effect` across retries** when a failing run skips later sections; details in **`docs/section-extraction.md`** § *Testing section routing across retries*); repository/compose helpers under **`tests/test_repository_sections.py`**, **`tests/test_step3_section_digest.py`**, **`tests/test_composer_*.py`**, etc.
+Digest/orchestration coverage includes **`tests/test_milestone5_daily_digest.py`**, **`tests/test_step5_section_digest_integration.py`** (mock **`RouterAgent.run`** by stable keys — avoid list **`side_effect`** queues across retries), **`tests/test_ainews_*`**, **`tests/test_map_reduce_chunks.py`**, **`tests/test_sender_match.py`**, **`tests/test_repository_sections.py`**, **`tests/test_composer_*.py`**, etc. Phase 6 content-unit tests — **`milestone8-content-unit-routing.md`** §IV.
 
 ## Development milestone workflow
 
-Implement milestone specs in order (`milestone5.md`, `milestone6.md`, **`milestone7.md`**). Each milestone adds tests and keeps CLI/storage contracts explicit where applicable (Milestone 7 is deployment documentation + shell wrapper).
+Implement milestone specs in order (`milestone5.md`, `milestone6.md`, **`milestone7.md`**). **Planned:** content-unit routing Phase 6 — **`milestone8-content-unit-routing.md`** + **`docs/content-unit-routing-design.md`**. Each milestone adds tests and keeps CLI/storage contracts explicit where applicable (Milestone 7 is deployment documentation + shell wrapper).
 
 ## Safety guarantees
 

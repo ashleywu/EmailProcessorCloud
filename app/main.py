@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from app.agents.ainews_radar_map_reduce_agent import AINewsRadarMapReduceAgent
 from app.agents.daily_digest_agent import DailyDigestAgent
 from app.agents.leadership_agent import LeadershipProcessorAgent
 from app.agents.courses_agent import CoursesProcessorAgent
@@ -156,6 +157,13 @@ def _cmd_run_daily(_args: argparse.Namespace) -> int:
             radar_agent=RadarProcessorAgent(llm, model=llm.processor_model),
             leadership_agent=LeadershipProcessorAgent(llm, model=llm.processor_model),
             courses_agent=CoursesProcessorAgent(llm, model=llm.processor_model),
+            map_reduce_radar_agent=AINewsRadarMapReduceAgent(
+                llm,
+                model=llm.processor_model,
+                chunk_target_chars=settings.map_reduce_chunk_target_chars,
+                max_map_calls=settings.map_reduce_max_map_calls,
+            ),
+            map_reduce_radar_senders=settings.map_reduce_radar_senders,
             composer=DigestComposer(),
             quality_gate=DigestQualityGateAgent(),
             labeler=GmailLabeler(client),

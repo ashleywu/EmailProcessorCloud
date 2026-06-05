@@ -134,4 +134,14 @@ app/agents/
 
 ---
 
+## V. Forward reference: content-unit routing (Phase 6)
+
+The live section pipeline in this milestone remains the production path until **Milestone 8 / Phase 6** lands:
+
+- **Design:** `docs/content-unit-routing-design.md`, `docs/content-unit-classifiers.md`  
+- **Implementation spec:** `milestone8-content-unit-routing.md`  
+- **`RouterAgent`** stays for **fallback**; primary classification for trusted/mixed senders moves to **`ContentUnitClassifierAgent`** (Option B — do not repurpose `RouterAgent`).
+
+---
+
 **This document is the single source of requirements for Milestone 5.** If local code disagrees, align implementation and tests with this spec and existing DB/query conventions.

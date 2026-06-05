@@ -1,5 +1,7 @@
 # Router — choose **one** processor template for **this section slice**
 
+> **Phase 6 note:** This prompt is used by **`RouterAgent` on the fallback section path only** (`generic_section_routing`). Trusted priors and mixed publications use **`ContentUnitClassifierAgent`** + `content_unit_classifier.md` instead. See `docs/content-unit-classifiers.md` § Router vs classifier.
+
 The pipeline calls you **once per email section**, not once per whole email.  
 Your `category` applies **only to the current slice** (the plaintext + heading below). It selects **exactly one** downstream JSON processor for this slice.
 

@@ -250,6 +250,13 @@ class GmailFetcher:
         )
         return parse_gmail_message(payload)
 
+    def fetch_message_sender(self, message_id: str) -> str | None:
+        """Return the RFC5322 From header for a message (metadata fetch only)."""
+
+        msg = self._get_message(message_id)
+        raw = (msg.sender or "").strip()
+        return raw or None
+
     def fetch_message_html(self, message_id: str) -> str:
         """Download full message and return HTML (or HTML-wrapped plain text)."""
 

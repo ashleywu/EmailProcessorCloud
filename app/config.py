@@ -59,6 +59,22 @@ class Settings(BaseSettings):
     router_model: str = Field(default="gpt-4o-mini", validation_alias="ROUTER_MODEL")
     processor_model: str = Field(default="gpt-4o-mini", validation_alias="PROCESSOR_MODEL")
 
+    map_reduce_radar_senders_csv: str = Field(
+        default="swyx+ainews@substack.com",
+        validation_alias="DAILY_DIGEST_MAP_REDUCE_RADAR_SENDERS",
+    )
+    map_reduce_chunk_target_chars: int = Field(
+        default=14000,
+        ge=500,
+        validation_alias="DAILY_DIGEST_MAP_REDUCE_CHUNK_TARGET_CHARS",
+    )
+    map_reduce_max_map_calls: int = Field(
+        default=6,
+        ge=1,
+        le=32,
+        validation_alias="DAILY_DIGEST_MAP_REDUCE_MAX_MAP_CALLS",
+    )
+
     digest_recipient_email: str | None = Field(default=None, validation_alias="DIGEST_RECIPIENT_EMAIL")
     newsletter_senders_csv: str = Field(default="", validation_alias="NEWSLETTER_SENDERS")
 
@@ -83,6 +99,15 @@ class Settings(BaseSettings):
     @property
     def newsletter_senders(self) -> tuple[str, ...]:
         raw = self.newsletter_senders_csv
+        if raw is None or not str(raw).strip():
+            return ()
+        parts = [p.strip() for p in str(raw).split(",")]
+        return tuple(p for p in parts if p)
+
+    @computed_field
+    @property
+    def map_reduce_radar_senders(self) -> tuple[str, ...]:
+        raw = self.map_reduce_radar_senders_csv
         if raw is None or not str(raw).strip():
             return ()
         parts = [p.strip() for p in str(raw).split(",")]
@@ -139,6 +164,18 @@ def format_gmail_config_summary(settings: Settings) -> str:
     lines.append(f"ROUTER_MODEL={settings.router_model}")
     lines.append(f"PROCESSOR_MODEL={settings.processor_model}")
     lines.append(f"DAILY_DIGEST_MAX_QUALITY_GATE_ATTEMPTS={settings.max_quality_gate_attempts}")
+    n_mr = len(settings.map_reduce_radar_senders)
+    lines.append(f"DAILY_DIGEST_MAP_REDUCE_RADAR_SENDERS_COUNT={n_mr}")
+    mr_display = (
+        ",".join(settings.map_reduce_radar_senders)
+        if settings.map_reduce_radar_senders
+        else "(none)"
+    )
+    lines.append(f"DAILY_DIGEST_MAP_REDUCE_RADAR_SENDERS={mr_display}")
+    lines.append(
+        f"DAILY_DIGEST_MAP_REDUCE_CHUNK_TARGET_CHARS={settings.map_reduce_chunk_target_chars}",
+    )
+    lines.append(f"DAILY_DIGEST_MAP_REDUCE_MAX_MAP_CALLS={settings.map_reduce_max_map_calls}")
     lines.append("")
 
     n_senders = len(settings.newsletter_senders)

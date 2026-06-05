@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.agents.courses_agent import CoursesProcessorAgent
+from app.agents.ainews_radar_map_reduce_agent import AINewsRadarMapReduceAgent
 from app.agents.leadership_agent import LeadershipProcessorAgent
 from app.agents.radar_agent import RadarProcessorAgent
 from app.agents.router_agent import RouterAgent
@@ -14,10 +15,11 @@ from app.digest.quality_gate import DigestQualityGateAgent
 from app.gmail.fetcher import GmailFetcher
 from app.gmail.labeler import INBOX_LABEL, PROCESSED_LABEL, GmailLabeler
 from app.gmail.sender import GmailSender
-from app.models.outputs import PROCESSOR_OUTPUT_KIND, RouterDecision, RouteCategory
+from app.models.outputs import MAP_REDUCE_RADAR_DIGEST_KIND, PROCESSOR_OUTPUT_KIND, RouterDecision, RouteCategory
 from app.models.section import EmailSection
 from app.parsing.parser import parse_newsletter_html
 from app.parsing.section_caps import normalize_sections_for_routing
+from app.parsing.sender_match import sender_matches_map_reduce
 from app.storage.repository import EmailSectionRecord, StateRepository
 from app.storage.run_lock import RunLock
 
@@ -51,6 +53,8 @@ class DailyDigestAgent:
         labeler: GmailLabeler,
         sender: GmailSender,
         digest_to: str,
+        map_reduce_radar_agent: AINewsRadarMapReduceAgent | None = None,
+        map_reduce_radar_senders: tuple[str, ...] = (),
         digest_subject_prefix: str = "Daily digest",
         lock_owner: str | None = None,
         max_quality_gate_attempts: int = 3,
@@ -63,6 +67,8 @@ class DailyDigestAgent:
         self._radar = radar_agent
         self._leadership = leadership_agent
         self._courses = courses_agent
+        self._map_reduce = map_reduce_radar_agent
+        self._map_reduce_senders = tuple(map_reduce_radar_senders)
         self._composer = composer
         self._quality_gate = quality_gate
         self._labeler = labeler
@@ -171,6 +177,9 @@ class DailyDigestAgent:
         message_id: str,
         digest_id: int,
     ) -> ProcessLink | None:
+        if self._uses_map_reduce_radar(email_id, message_id):
+            return self._process_map_reduce_radar_email(email_id, message_id, digest_id)
+
         reuse = self._repo.try_reuse_complete_outputs(email_id)
         if reuse is not None:
             self._repo.attach_email_to_digest(digest_id, email_id)
@@ -242,6 +251,52 @@ class DailyDigestAgent:
 
             self._repo.attach_email_to_digest(digest_id, email_id)
             return (email_id, message_id, frozenset(categories))
+        except Exception as exc:
+            self._repo.update_email_status(
+                email_id,
+                "failed",
+                error_message=str(exc),
+                increment_retry=True,
+            )
+            return None
+
+    def _uses_map_reduce_radar(self, email_id: int, message_id: str) -> bool:
+        if self._map_reduce is None or not self._map_reduce_senders:
+            return False
+        sender = self._repo.get_email_sender_by_id(email_id)
+        if not sender:
+            sender = self._fetcher.fetch_message_sender(message_id)
+        return sender_matches_map_reduce(sender, self._map_reduce_senders)
+
+    def _process_map_reduce_radar_email(
+        self,
+        email_id: int,
+        message_id: str,
+        digest_id: int,
+    ) -> ProcessLink | None:
+        if self._repo.map_reduce_radar_digest_cached(email_id):
+            self._repo.attach_email_to_digest(digest_id, email_id)
+            return (email_id, message_id, frozenset({RouteCategory.RADAR}))
+
+        assert self._map_reduce is not None
+        try:
+            html = self._fetcher.fetch_message_html(message_id)
+            parsed = parse_newsletter_html(html)
+            subject = self._repo.get_email_subject_by_id(email_id)
+
+            self._repo.replace_email_sections(email_id, parsed.sections)
+            self._repo.clear_section_scoped_agent_outputs(email_id)
+
+            digest_out = self._map_reduce.run(parsed, subject=subject)
+            self._repo.save_agent_output(
+                email_id,
+                MAP_REDUCE_RADAR_DIGEST_KIND,
+                digest_out,
+                email_section_id=None,
+                category=RouteCategory.RADAR.value,
+            )
+            self._repo.attach_email_to_digest(digest_id, email_id)
+            return (email_id, message_id, frozenset({RouteCategory.RADAR}))
         except Exception as exc:
             self._repo.update_email_status(
                 email_id,

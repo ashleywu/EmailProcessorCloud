@@ -161,7 +161,13 @@ Update or add:
 5. **`show-config`:** stdout **does not** contain unredacted secrets (§III).
 6. **`run-daily`** without recipient ⇒ **fail-fast** (**Settings** or CLI).
 7. Remove or avoid tests/docs for deprecated **`retry-errors`**.
-8. **`DailyDigestAgent` section mocks:** deterministic **`RouterAgent.run`** stubs for retries (see **`docs/section-extraction.md`** § *Testing section routing across retries* — **avoid list `side_effect` queues**) are covered separately from **`tests/test_milestone5_daily_digest.py`**.
+8. **`DailyDigestAgent` section mocks:** deterministic **`RouterAgent.run`** stubs for retries — **avoid list `side_effect` queues** — covered in **`tests/test_step5_section_digest_integration.py`**.
+
+---
+
+## X. Forward reference: content-unit routing (Phase 6)
+
+Planned routing refactor (**Milestone 8**): `docs/content-unit-routing-design.md`, `docs/content-unit-classifiers.md`, `milestone8-content-unit-routing.md`. Does not change Milestone 6 deliverables.
 
 ---
 

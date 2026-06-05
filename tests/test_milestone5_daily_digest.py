@@ -17,15 +17,12 @@ from app.agents.courses_agent import CoursesProcessorAgent
 from app.agents.radar_agent import RadarProcessorAgent
 from app.agents.router_agent import RouterAgent
 from app.agents.technology_agent import TechnologyProcessorAgent
-from app.digest.composer import DigestComposer
 from app.digest.quality_gate import DigestQualityGateAgent, QualityGateResult
-from app.gmail.client import GmailClient
-from app.gmail.fetcher import GmailFetcher
-from app.gmail.labeler import INBOX_LABEL, GmailLabeler
-from app.gmail.sender import GmailSender
+from app.gmail.labeler import INBOX_LABEL
 from app.models.email import EmailInput
 from app.storage.repository import StateRepository
 from app.storage.run_lock import RunLock
+from tests.agent_factory import build_daily_digest_agent
 from tests.fakes import FakeGmailService, FakeHttpError, make_message
 from tests.fakes.llm import ScriptedLLMClient
 
@@ -56,22 +53,13 @@ def _agent(
 ) -> DailyDigestAgent:
     if queue_send_fail:
         svc.queue_failure("messages.send", FakeHttpError(400, "send boom"))
-    client = GmailClient(service_factory=lambda: svc)
-    fetcher = GmailFetcher(client, senders=["newsletter@fixture.test"], max_results=20)
-    return DailyDigestAgent(
-        repo=repo,
-        run_lock=lock,
-        fetcher=fetcher,
-        router_agent=RouterAgent(llm, model="m"),
-        technology_agent=TechnologyProcessorAgent(llm, model="m"),
-        radar_agent=RadarProcessorAgent(llm, model="m"),
-        leadership_agent=LeadershipProcessorAgent(llm, model="m"),
-        courses_agent=CoursesProcessorAgent(llm, model="m"),
-        composer=DigestComposer(title="Test digest"),
-        quality_gate=gate or DigestQualityGateAgent(),
-        labeler=GmailLabeler(client),
-        sender=GmailSender(client, sender="me@test"),
-        digest_to="reader@test",
+    return build_daily_digest_agent(
+        repo,
+        lock,
+        svc,
+        llm,
+        gate=gate,
+        map_reduce_senders=(),
     )
 
 

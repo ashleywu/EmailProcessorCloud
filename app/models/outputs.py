@@ -146,6 +146,68 @@ class RadarOutput(BaseModel):
     summary: str | None = None
 
 
+MAP_REDUCE_RADAR_DIGEST_KIND = "ainews_radar_digest"
+
+
+class AINewsRadarCardRole(StrEnum):
+    TOP_STORY = "top_story"
+    RECAP = "recap"
+
+
+class AINewsRadarDigestCard(BaseModel):
+    role: AINewsRadarCardRole = AINewsRadarCardRole.RECAP
+    title: str
+    tldr: str
+    key_points: list[str] = Field(default_factory=list)
+    why_it_matters: list[str] = Field(default_factory=list)
+    watchouts: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _list_caps(self) -> AINewsRadarDigestCard:
+        if len(self.key_points) > 7:
+            raise ValueError("key_points max 7")
+        if len(self.why_it_matters) > 3:
+            raise ValueError("why_it_matters max 3")
+        if len(self.watchouts) > 3:
+            raise ValueError("watchouts max 3")
+        return self
+
+
+class AINewsRadarDigestOutput(BaseModel):
+    cards: list[AINewsRadarDigestCard] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _card_bounds(self) -> AINewsRadarDigestOutput:
+        if not self.cards:
+            raise ValueError("cards must be non-empty")
+        if len(self.cards) > 3:
+            raise ValueError("cards max 3")
+        top_stories = [c for c in self.cards if c.role == AINewsRadarCardRole.TOP_STORY]
+        if len(top_stories) > 1:
+            raise ValueError("at most one top_story card")
+        return self
+
+
+class AINewsRadarFact(BaseModel):
+    entity: str
+    fact: str
+    implication: str | None = None
+    source_heading: str | None = None
+    importance_score: int = Field(ge=1, le=5, default=3)
+
+
+class AINewsRadarMapResult(BaseModel):
+    facts: list[AINewsRadarFact] = Field(default_factory=list)
+
+
+class AINewsRadarHeroCardOutput(BaseModel):
+    card: AINewsRadarDigestCard
+
+
+class AINewsRadarRecapCardsOutput(BaseModel):
+    cards: list[AINewsRadarDigestCard] = Field(default_factory=list)
+
+
 class LeadershipSignal(BaseModel):
     theme: str
     insight: str

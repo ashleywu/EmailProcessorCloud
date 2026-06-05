@@ -52,6 +52,76 @@
 {% endif %}
 
 <h2>AI Radar</h2>
+{% if ai_radar_top_story or ai_radar_recap %}
+  {% if ai_radar_top_story %}
+  <h3 class="sub">Top Story</h3>
+  {% for card in ai_radar_top_story %}
+  <div class="item deep-recap top-story">
+    <div><strong>{{ card.title | e }}</strong></div>
+    {% if card.source_sender %}<div class="sub">From: {{ card.source_sender | e }}</div>{% endif %}
+    <div class="sub">{{ card.subject | e }}</div>
+    <p>{{ card.tldr | e }}</p>
+    {% if card.key_points %}
+    <ul>
+      {% for point in card.key_points[:5] %}
+      <li>{{ point | e }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if card.why_it_matters %}
+    <div class="sub"><strong>Why it matters</strong></div>
+    <ul class="sub">
+      {% for line in card.why_it_matters %}
+      <li>{{ line | e }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if card.watchouts %}
+    <div class="sub"><strong>Watchouts</strong></div>
+    <ul class="sub">
+      {% for line in card.watchouts %}
+      <li>{{ line | e }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+  {% if ai_radar_recap %}
+  <h3 class="sub">Recap</h3>
+  {% for card in ai_radar_recap %}
+  <div class="item deep-recap recap">
+    <div><strong>{{ card.title | e }}</strong></div>
+    {% if card.source_sender %}<div class="sub">From: {{ card.source_sender | e }}</div>{% endif %}
+    <div class="sub">{{ card.subject | e }}</div>
+    <p>{{ card.tldr | e }}</p>
+    {% if card.key_points %}
+    <ul>
+      {% for point in card.key_points[:5] %}
+      <li>{{ point | e }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if card.why_it_matters %}
+    <div class="sub"><strong>Why it matters</strong></div>
+    <ul class="sub">
+      {% for line in card.why_it_matters %}
+      <li>{{ line | e }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if card.watchouts %}
+    <div class="sub"><strong>Watchouts</strong></div>
+    <ul class="sub">
+      {% for line in card.watchouts %}
+      <li>{{ line | e }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+{% endif %}
 {% if ai_radar %}
   {% for it in ai_radar %}
   <div class="item">
@@ -66,7 +136,7 @@
     </ul>
   </div>
   {% endfor %}
-{% else %}
+{% elif not ai_radar_top_story and not ai_radar_recap %}
   <p class="sub">No items in this section.</p>
 {% endif %}
 

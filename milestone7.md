@@ -2,6 +2,8 @@
 
 **Prerequisite:** Milestones 1–6 are complete. The app runs as **`python -m app.main run-daily`** with **`Settings`** / **`.env`**, Gmail OAuth files on disk, and SQLite state.
 
+**Also see (planned, not part of M7):** [`milestone8-content-unit-routing.md`](milestone8-content-unit-routing.md) — Phase 6 content-unit routing.
+
 **Goal:** Document and ship a **repeatable Ubuntu VPS** deployment (single maintainer, **`ubuntu`** user, **`~/daily-digest/`** layout) without putting secrets in git.
 
 ---

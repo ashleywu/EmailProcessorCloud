@@ -1,6 +1,6 @@
 # Radar processor — **one RADAR-class section slice**
 
-The router already set **`RADAR`** for **this section only**. You never see the rest of the newsletter.
+The router already set **`RADAR`** for **this section only** (fallback path). On the content-unit path, classification already chose RADAR before this processor runs.
 
 Reply with **only** a JSON object. No markdown fences, no extra text.
 
