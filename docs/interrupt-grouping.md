@@ -144,22 +144,62 @@ Default when no interrupt rule fires.
 
 Weak keyword promo detection moves to `UNKNOWN_INTERRUPT`, not forced ad classification.
 
+### 4.4 P0 — Strippable vs retained (no silent content loss)
+
+**Precision over recall** applies to *labeling*, not to *hiding*. Only **high-confidence** interrupts may be removed from article text or hidden in the digest.
+
+| Class | Roles | Grouping | Digest |
+|-------|-------|----------|--------|
+| **Strippable** | `PROMO`, `NAVIGATION`, `FOOTER`, `SUBSCRIPTION_CTA` | Excluded from article `unit_text`; may be separate interrupt units | May be **hidden** (default for profile path) |
+| **Retained** | `NORMAL_CONTENT`, `UNKNOWN_INTERRUPT` | **Always kept in article body** — `UNKNOWN_INTERRUPT` is treated as content for merge | **Never hidden** — flows through article processor |
+
+**P0 rule:** `UNKNOWN_INTERRUPT` must **not** become a standalone hidden unit. If we are unsure whether a section is an interrupt, **retain it in the article** rather than drop it from the digest.
+
+Implementation helper:
+
+```python
+STRIPPABLE_INTERRUPT_ROLES = frozenset({
+    InterruptRole.PROMO,
+    InterruptRole.NAVIGATION,
+    InterruptRole.FOOTER,
+    InterruptRole.SUBSCRIPTION_CTA,
+})
+
+def is_strippable_interrupt(role: InterruptRole) -> bool:
+    return role in STRIPPABLE_INTERRUPT_ROLES
+
+def is_article_body_section(role: InterruptRole) -> bool:
+    return role in {InterruptRole.NORMAL_CONTENT, InterruptRole.UNKNOWN_INTERRUPT}
+```
+
+Only `is_strippable_interrupt()` sections may be stripped, bridged across, or composer-hidden.
+
 ---
 
 ## 5. Step 2 — Content Grouping
 
-### 5.1 Interrupt handling in grouping
+**Scope:** Step 2 (bridge / split / BC) applies to the **generic fallback pipeline** and profiles that opt into bridge logic (e.g. Turing Post). **`single_*` profile strategies** (ByteByteGo, ALE, Latent Space interview) **do not use Step 2** — see [`sender-profiles.md`](sender-profiles.md) §6.
 
-For each interrupt section `I` at index `i` with adjacent non-interrupt runs:
+### 5.1 Interrupt handling in grouping (generic path)
+
+Bridge evaluation applies only around **strippable** interrupts (`PROMO`, `NAVIGATION`, `FOOTER`, `SUBSCRIPTION_CTA`).
+
+For each strippable section `I`:
 
 ```
-pre_run  = maximal NORMAL_CONTENT (and optionally UNKNOWN_INTERRUPT*) run before I
-post_run = maximal NORMAL_CONTENT (*) run after I
+pre_run  = maximal contiguous article-body sections before I
+post_run = maximal contiguous article-body sections after I
+
+article-body = NORMAL_CONTENT ∪ UNKNOWN_INTERRUPT   # see §4.4
 ```
 
-\* `UNKNOWN_INTERRUPT` sections **do not** break runs for bridge evaluation unless later reclassified; they stay as their own singleton units unless BC merges them. (Default: singleton `unknown_interrupt` unit, not bridged across.)
+`UNKNOWN_INTERRUPT` sections:
 
-**Interrupt sections never join `unit_text` of article units.** They always become separate units (or filtered).
+- **Stay inside** `pre_run` / `post_run` — they do **not** break runs
+- Are **never** stripped, never separate units, never composer-hidden
+- Are included in article `unit_text` and processor input
+
+**Strippable** sections never join article `unit_text`. They may become separate interrupt units (hidden) or be bridged over when pre/post merge.
 
 ### 5.2 Bridge decision (deterministic)
 
@@ -201,12 +241,12 @@ Gray score band, conflicting signals, or `UNKNOWN_INTERRUPT` between runs with w
 
 ### 5.3 Unit assembly after grouping
 
-| Unit kind | `section_keys` | `interrupt_role` (unit-level) | Digest |
-|-----------|----------------|-------------------------------|--------|
-| **Article** | Bridged or merged non-interrupt group | — | Normal classify + processor |
-| **Promo interrupt** | `[s2]` | `promo` | COURSES or **hidden** (default hidden) |
-| **Nav / footer / subscription** | singleton | matching role | **hidden** |
-| **Unknown interrupt** | singleton | `unknown_interrupt` | hidden unless BC merges into article |
+| Unit kind | `section_keys` | Digest |
+|-----------|----------------|--------|
+| **Article** | Merged `NORMAL_CONTENT` + `UNKNOWN_INTERRUPT` (± bridged across strippable gaps) | Normal classify + processor |
+| **Strippable interrupt** | Single `PROMO` / `NAVIGATION` / `FOOTER` / `SUBSCRIPTION_CTA` | COURSES or **hidden** (default hidden) |
+
+There is **no** `UNKNOWN_INTERRUPT` unit row. Mislabeled body sections remain in the article unit and appear in the digest.
 
 Article unit fields:
 
@@ -288,7 +328,7 @@ Prompt updates (`boundary_classifier.md`, `format_boundary_classifier_input`):
 Validation updates:
 
 - Remove `spans_hard_boundary` for promo
-- Add: article unit must not contain `interrupt_role in {promo, navigation, footer, subscription_cta}`
+- Add: article unit must not contain **strippable** interrupt roles; `unknown_interrupt` **may** appear in article units
 - Add: bridged unit indices may have gaps only at interrupt positions
 
 ---
@@ -297,12 +337,12 @@ Validation updates:
 
 | `unit_role` | Classify | Processor | Composer |
 |-------------|----------|-----------|----------|
-| `article` | `ContentUnitClassifierAgent` | Normal | Normal |
-| `interrupt` + `PROMO` | Heuristic `COURSES` or skip | Skip or light courses | **hidden** (default) |
-| `interrupt` + nav/footer/subscription | Skip | Skip | **hidden** |
-| `interrupt` + `UNKNOWN_INTERRUPT` | Skip unless merged into article | Skip | **hidden** |
+| `article` (includes any `UNKNOWN_INTERRUPT` sections) | `ContentUnitClassifierAgent` | Normal | Normal |
+| `interrupt` + strippable role | Heuristic `COURSES` or skip | Skip or light courses | **hidden** (default) |
 
-On the **profile fast path**, interrupt detection is shared; profile strategy merges all `NORMAL_CONTENT` without bridge/BC (e.g. ByteByteGo `SINGLE_TECH_ARTICLE`). Bridge rules in §5 apply to **generic fallback** and profiles that opt into them (e.g. Turing Post when MAIN/ROUNDUP is unclear).
+**Composer must never hide content solely because `interrupt_role == unknown_interrupt`.**
+
+On the **profile fast path** ([`sender-profiles.md`](sender-profiles.md)): strip **strippable** interrupts only → merge **all article-body sections** → no bridge, no BC for `single_*` strategies. Bridge rules in §5 apply to **generic fallback** only (and Turing MAIN/ROUNDUP partition where noted).
 
 ---
 
@@ -339,7 +379,8 @@ On the **profile fast path**, interrupt detection is shared; profile strategy me
 | Fixture | Step 1 | Step 2 |
 |---------|--------|--------|
 | `single_essay_mid_sponsor` | s2=`PROMO` | BRIDGE → 1 article + 1 promo unit |
-| `body_mentions_register_once` | `NORMAL_CONTENT` (not PROMO) | — |
+| `body_mentions_register_once` | `NORMAL_CONTENT` or `UNKNOWN_INTERRUPT` | stays in article unit; **not** hidden |
+| `false_unknown_on_body` | weak signal → `UNKNOWN_INTERRUPT` | retained in article; digest unchanged |
 | `dual_story_mid_sponsor` | s2=`PROMO` | SPLIT |
 | `tail_webinar_cta` | last=`PROMO` or `UNKNOWN` | no bridge (no post) |
 | `every_multi_url` | — | SPLIT / existing ambiguous BC |
@@ -353,10 +394,12 @@ Regression: ByteByteGo Salesforce → exactly **one** Technology unit spanning s
 
 | Phase | Deliverable |
 |-------|-------------|
-| **P1a** | `interrupt_detection.py` + tests |
-| **P1b** | Grouping bridge/split + unit assembly |
-| **P1c** | BC prompt/validation/orchestrator for bridge ambiguity |
-| **P1d** | Classifier short-circuit + composer filter |
+| **P1a** | `interrupt_detection.py` + strippable/retained helpers + tests — **unblocks Sender Profile SP1** |
+| **P1b** | Generic-path bridge/split + unit assembly (Every fallback) — **not** required for ByteByteGo |
+| **P1c** | BC prompt/validation/orchestrator for bridge ambiguity (generic only) |
+| **P1d** | Composer: hide **strippable** interrupt units only |
+
+**P1a ∥ SP1** may ship in parallel. P1b–d are for generic fallback; do not block profile fast path.
 
 Ship separately from Phase 7.1 ambiguous-trigger tightening.
 
@@ -365,10 +408,12 @@ Ship separately from Phase 7.1 ambiguous-trigger tightening.
 ## 12. Summary
 
 1. **Interrupt Detection** — deterministic roles; high-precision `PROMO`; uncertain → `UNKNOWN_INTERRUPT`, never forced ad.
-2. **Content Grouping** — strong evidence bridges across interrupts; blockers split; gray → **existing** Phase 7 BC with a **narrow** same-unit question.
-3. **No new LLM agent** — BC sees roles as context, does not re-annotate the email.
-4. **AINews** — untouched.
-5. **Salesforce target** — one Technology unit `s0–s1 + s3–s20`, promo unit `s2` filtered aside.
+2. **P0 safety** — only strippable roles may be hidden; `UNKNOWN_INTERRUPT` **stays in article body**, never silent drop.
+3. **Content Grouping (generic)** — bridge across **strippable** gaps only; gray → existing BC.
+4. **Profile fast path** — strip strippable → merge article-body; **no bridge** for `single_*` senders ([`sender-profiles.md`](sender-profiles.md)).
+5. **No new LLM agent** — BC answers same-unit question only; does not re-label interrupts.
+6. **AINews** — untouched.
+7. **Salesforce (ByteByteGo profile)** — one Technology unit `s0–s1 + s3–s20`; strippable `s2` hidden aside.
 
 ---
 

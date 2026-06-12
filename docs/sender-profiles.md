@@ -1,7 +1,7 @@
 # Sender Profiles — Design Spec
 
 **Status:** Planned  
-**Prerequisite:** Shared [`interrupt-grouping.md`](interrupt-grouping.md) interrupt detection (Step 1)  
+**Prerequisite (SP1):** [`interrupt-grouping.md`](interrupt-grouping.md) **P1a only** — interrupt detection + strippable/retained helpers. **Not** P1b generic bridge.  
 **Related:** [`map-reduce-radar-design.md`](map-reduce-radar-design.md) (AINews), [`milestone8-content-unit-routing.md`](../milestone8-content-unit-routing.md), `app/parsing/sender_match.py`
 
 ---
@@ -54,7 +54,17 @@ flowchart TB
 | **Sender profile** | How to merge, default category, which processor | **Yes** (registry) |
 | **Generic pipeline** | Full grouping + BC + classifier | No (Every, fallback) |
 
-**Do not** duplicate “strip sponsor / footer” logic per profile — all profiles use shared interrupt detection, then apply their **merge strategy** on `NORMAL_CONTENT` sections only.
+**Do not** duplicate “strip sponsor / footer” logic per profile — all profiles use shared interrupt detection ([`interrupt-grouping.md`](interrupt-grouping.md) §4.4), then apply their **merge strategy**.
+
+### 2.1 P0 — Profile merge vs generic bridge
+
+| Path | Grouping logic | Needs P1b bridge? |
+|------|----------------|-------------------|
+| `single_tech_article`, `single_leadership_essay`, `single_tech_interview` | Strip **strippable** interrupts → merge **all article-body** sections (`NORMAL_CONTENT` + `UNKNOWN_INTERRUPT`) | **No** |
+| `tech_article_optional_radar` | MAIN vs ROUNDUP partition + strippable strip | Partial (MAIN/ROUNDUP only) |
+| Generic fallback (Every, counter-evidence) | Full interrupt-grouping Step 2 + BC | **Yes** |
+
+ByteByteGo does **not** need cross-interrupt bridge scoring. Mislabeled `UNKNOWN_INTERRUPT` sections stay in the merged article unit (never hidden).
 
 ---
 
@@ -79,7 +89,7 @@ class SenderProfile:
     processor: str                       # dispatch key → agent + prompt + schema
 
     fallback_strategy: str = "generic_content_unit"
-    promo_handling: str = "strip_and_hide"   # interrupts → separate units, hidden in digest
+    promo_handling: str = "strip_strippable_and_hide"   # §4.4 strippable only; UNKNOWN stays in body
     maximum_digest_cards: dict[str, int] = field(default_factory=dict)
     counter_evidence_rules: tuple[str, ...] = (
         "multi_primary_url",
@@ -165,12 +175,15 @@ Record `fallback_reason` as the first rule ID that fired.
 
 **Known shape:** One complete technical article. H2/H3 are chapters. Mid-email sponsor. In-body links are citations, not separate stories.
 
-**Grouping:**
+**Grouping** (no bridge, no BC):
 
-1. Run interrupt detection on all sections.
-2. Merge **all** `NORMAL_CONTENT` sections into **one** `ContentUnit` (sponsors/nav/footer are separate interrupt units, hidden).
-3. Do **not** run Boundary Classifier on happy path.
-4. Do **not** run Content Unit Classifier — force `TECHNOLOGY`, `routing_source=sender_profile`.
+1. Run interrupt detection (P1a) on all sections.
+2. **Strip** sections with strippable roles only: `PROMO`, `NAVIGATION`, `FOOTER`, `SUBSCRIPTION_CTA`.
+3. **Merge all remaining article-body sections** (`NORMAL_CONTENT` + `UNKNOWN_INTERRUPT`) into **one** `ContentUnit`.
+4. Do **not** run Boundary Classifier.
+5. Do **not** run Content Unit Classifier — force `TECHNOLOGY`, `routing_source=sender_profile`.
+
+Strippable interrupts may be separate hidden units. `UNKNOWN_INTERRUPT` never stripped — it remains in step 3 merge.
 
 **Processor:** Existing `content_unit_technology` (one call).
 
@@ -186,7 +199,7 @@ Record `fallback_reason` as the first rule ID that fired.
 
 **Known shape:** One leadership essay. Subheadings are argument sections. High value in author’s explicit recommendations.
 
-**Grouping:** Same as §6.1 — merge all `NORMAL_CONTENT` into one unit.
+**Grouping:** Same as §6.1 — strip strippable only; merge all article-body sections into one unit.
 
 **Classification:** Force `LEADERSHIP` (skip classifier).
 
@@ -235,8 +248,8 @@ See [`map-reduce-radar-design.md`](map-reduce-radar-design.md). No interrupt gro
 
 **Grouping:**
 
-1. Strip interrupts (sponsor, show notes nav, CTA, footer).
-2. Merge **all** `NORMAL_CONTENT` into **one** unit (do not split on interview topic h2s).
+1. Strip **strippable** interrupts only (sponsor, show notes nav, CTA, footer).
+2. Merge **all article-body** sections into **one** unit (do not split on interview topic h2s; `UNKNOWN_INTERRUPT` stays in body).
 
 **Classification:** Force `TECHNOLOGY`.
 
@@ -282,7 +295,8 @@ Use deterministic rules first (heading patterns, relative length, link density, 
 |-------------|--------------|----------|-----------|
 | All `MAIN_ARTICLE` | One merged unit | TECHNOLOGY | `technology` (or shared main-article extract) |
 | All `NEWS_ROUNDUP` | One merged unit | RADAR | Reuse map-reduce chunking + recap reduce (subset of AINews machinery) |
-| Interrupts | Singleton units | COURSES / hidden | Skip or courses |
+| Strippable interrupts | Singleton units | COURSES / hidden | Skip or courses |
+| `UNKNOWN_INTERRUPT` | Stays in MAIN or ROUNDUP body per partition | — | Never hidden |
 
 **Digest caps:** 1 Technical Index + ≤2 Radar cards + optional hidden promo.
 
@@ -373,13 +387,20 @@ Render `LeadershipEssayOutput.author_action_items` and `senior_engineer_actions`
 | Phase | Scope |
 |-------|--------|
 | **SP0** | `config/sender_profiles.json` + `lookup_sender_profile()` + decision logging |
-| **SP1** | `SINGLE_TECH_ARTICLE` (ByteByteGo) + shared interrupt detection dependency |
-| **SP2** | `SINGLE_LEADERSHIP_ESSAY` + `LeadershipEssayOutput` + composer |
-| **SP3** | `SINGLE_TECH_INTERVIEW` + `TechnicalInterviewOutput` |
-| **SP4** | `TECH_ARTICLE_OPTIONAL_RADAR` (Turing Post) — highest complexity |
+| **SP1** | `SINGLE_TECH_ARTICLE` (ByteByteGo) — requires **interrupt-grouping P1a only** |
+| **SP2** | `SINGLE_LEADERSHIP_ESSAY` + `LeadershipEssayOutput` + composer — P1a only |
+| **SP3** | `SINGLE_TECH_INTERVIEW` + `TechnicalInterviewOutput` — P1a only |
+| **SP4** | `TECH_ARTICLE_OPTIONAL_RADAR` (Turing Post) — P1a + partial generic grouping |
 | **SP5** | Wire AINews entry in registry (refactor gate only; behavior unchanged) |
 
-**Prerequisite order:** interrupt-grouping P1a–b before SP1 (shared strip/merge).
+**Prerequisite order:**
+
+```
+P1a (interrupt detection) ──► SP1 / SP2 / SP3   # parallel OK
+P1b–d (generic bridge/BC)  ──► generic fallback + Every + SP4 gray cases
+```
+
+Do **not** block ByteByteGo on P1b generic bridge implementation.
 
 ---
 
@@ -387,7 +408,8 @@ Render `LeadershipEssayOutput.author_action_items` and `senior_engineer_actions`
 
 | Test | Expect |
 |------|--------|
-| ByteByteGo Salesforce fixture | Profile path → 1 technology unit, 1 TI card, no BC |
+| ByteByteGo Salesforce fixture | Profile path → 1 technology unit, 1 TI card, no BC, no bridge |
+| ByteByteGo body with weak promo keyword | `UNKNOWN_INTERRUPT` → retained in article unit; not hidden |
 | ByteByteGo multi-URL fixture | `multi_primary_url` → generic fallback |
 | ALE fixture | `author_action_items` populated from source; separate from `senior_engineer_actions` |
 | `swyx@` interview fixture | 1 technical_interview unit |
@@ -410,7 +432,12 @@ Render `LeadershipEssayOutput.author_action_items` and `senior_engineer_actions`
 | Turing Post | `tech_article_optional_radar` | 1 TI + optional Radar |
 | Every / unknown / counter-evidence | `generic_content_unit` | Per-unit cards |
 
-**Core principle:** Sender Profile decides grouping + category + processor for predictable subscriptions; generic pipeline remains the **safety net**, not the default superhighway.
+**Core principles:**
+
+1. Sender Profile decides grouping + category + processor for predictable subscriptions.
+2. Profile `single_*` strategies: strip **strippable** interrupts → merge article-body — **no generic bridge**.
+3. `UNKNOWN_INTERRUPT` is never stripped or hidden (shared rule with interrupt-grouping §4.4).
+4. Generic pipeline + P1b bridge remains the **safety net** for Every and counter-evidence, not the default superhighway.
 
 ---
 
