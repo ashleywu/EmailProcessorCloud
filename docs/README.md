@@ -2,10 +2,12 @@
 
 | Document | Status | Summary |
 |----------|--------|---------|
-| [`content-unit-routing-design.md`](content-unit-routing-design.md) | Design | Pipeline, phases 0–9, sender priors, path exclusivity |
-| [`content-unit-classifiers.md`](content-unit-classifiers.md) | Design | Policies §1–§10, Router vs classifier, Option B agents |
+| [`sender-profiles.md`](sender-profiles.md) | **Planned** | Profile fast path (grouping + category + processor); generic pipeline as fallback |
+| [`interrupt-grouping.md`](interrupt-grouping.md) | **Planned** | Shared Step 1 interrupt roles + Step 2 grouping; used by profiles and generic fallback |
 | [`map-reduce-radar-design.md`](map-reduce-radar-design.md) | **Implemented** | AINews map-reduce Radar |
+| [`section-extraction.md`](section-extraction.md) | **Implemented** | DOM sectionizer, links per slice |
 | [`deploy-vps.md`](deploy-vps.md) | **Implemented** | Ubuntu VPS + cron |
+| [`phase7.1-backlog.md`](phase7.1-backlog.md) | Not started | Phase 7 ambiguous-trigger tightening |
 
 **Implementation specs (repo root):**
 

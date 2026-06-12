@@ -6,10 +6,11 @@
 
 **Design docs (normative):**
 
-- [`docs/content-unit-routing-design.md`](docs/content-unit-routing-design.md) — architecture & phases  
-- [`docs/content-unit-classifiers.md`](docs/content-unit-classifiers.md) — policies §1–§10, agent Option B  
+- [`docs/sender-profiles.md`](docs/sender-profiles.md) — profile fast path + generic fallback (planned)  
+- [`docs/interrupt-grouping.md`](docs/interrupt-grouping.md) — shared interrupt detection + generic grouping (planned)  
+- [`docs/map-reduce-radar-design.md`](docs/map-reduce-radar-design.md) — AINews path (unchanged)  
 
-**Status:** Not implemented — specification only.
+**Status:** Implemented for Phase 5–6; this remains the checklist for validation and future Phase 7/8 follow-up.
 
 ---
 
