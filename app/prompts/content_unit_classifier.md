@@ -1,12 +1,12 @@
 # Content unit classifier — pick one digest category
 
-**Status:** Phase 6 design — not wired.  
+**Status:** Phase 6 content-unit path.  
 **Schema:** `ContentUnitClassificationResult` (`app/models/content_units.py`).  
 **Agent:** `ContentUnitClassifierAgent` (not `RouterAgent`).
 
 Reply with **only** JSON. Classify only — do not extract digest fields.
 
-See [`docs/content-unit-classifiers.md`](../../docs/content-unit-classifiers.md) for policies and primary reader value rubric.
+See [`docs/implementation-status.md`](../../docs/implementation-status.md) and [`docs/sender-profiles.md`](../../docs/sender-profiles.md). Used on **generic fallback** path; profile senders skip this agent.
 
 ## Primary reader value
 

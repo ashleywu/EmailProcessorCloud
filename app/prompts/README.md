@@ -23,14 +23,15 @@ See [`docs/map-reduce-radar-design.md`](../docs/map-reduce-radar-design.md). **N
 | `ainews_radar_reduce_recap` | Recap sections |
 | `ainews_radar_reduce` | Full issue without recap boundary |
 
-## Content-unit pipeline (Phase 6 — design)
+## Content-unit pipeline (Phase 6 — partially implemented)
 
 Two-step flow per grouped **content unit**:
 
 1. **Classify** — `content_unit_classifier` → `ContentUnitClassificationResult`  
 2. **Extract** — exactly one of `content_unit_*` processors after `ProcessorDispatcher`
 
-Policies: [`docs/content-unit-classifiers.md`](../docs/content-unit-classifiers.md). Architecture: [`docs/content-unit-routing-design.md`](../docs/content-unit-routing-design.md).
+**Status:** Partially implemented — see [`docs/implementation-status.md`](../docs/implementation-status.md).  
+**Planned:** [`docs/sender-profiles.md`](../docs/sender-profiles.md) (profile fast path), [`docs/interrupt-grouping.md`](../docs/interrupt-grouping.md).
 
 | Step | Stem | Output model |
 |------|------|--------------|

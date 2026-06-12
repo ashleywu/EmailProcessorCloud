@@ -1,6 +1,6 @@
 # Interrupt Detection & Content Grouping — Design Spec
 
-**Status:** Planned (replaces promo **hard-boundary** policy in `group_content_units`)  
+**Status:** Planned — see [`implementation-status.md`](implementation-status.md) (replaces promo **hard-boundary** policy in `group_content_units`)  
 **Scope:** Content-unit path only — **publication-agnostic**, no new LLM agents  
 **Out of scope:** AINews / `MAP_REDUCE_RADAR_SENDERS` — unchanged ([`map-reduce-radar-design.md`](map-reduce-radar-design.md))  
 **Related:** [`milestone8-content-unit-routing.md`](../milestone8-content-unit-routing.md), [`phase7.1-backlog.md`](phase7.1-backlog.md), `app/parsing/content_unit_grouping.py`, `app/agents/boundary_classifier_agent.py`
@@ -215,7 +215,7 @@ article-body = NORMAL_CONTENT ∪ UNKNOWN_INTERRUPT   # see §4.4
 
 | ID | Condition |
 |----|-----------|
-| `MULTIPLE_PRIMARY_URLS` | `collect_primary_article_url_keys(pre + post)` size ≥ 2 |
+| `MULTIPLE_PRIMARY_URLS` | ≥2 distinct **primary article** URLs per §5.1 in [`sender-profiles.md`](sender-profiles.md) — **not** body citations |
 | `PRE_IS_SUBSTANTIVE_BODY` | `pre_run` alone passes `_looks_like_single_long_form` with ≥3 sections |
 | `PRE_HAS_TERMINATION` | Conclusion markers in pre tail |
 | `POST_IS_NEW_STORY` | Post opens as unrelated standalone article |
@@ -350,7 +350,7 @@ On the **profile fast path** ([`sender-profiles.md`](sender-profiles.md)): strip
 
 | Rule | Role |
 |------|------|
-| Primary URL only (`primary_links.py`) | Multi-story aggregators |
+| Primary article URL only (`primary_links.py` — **Planned**) | Multi-story aggregators; citations excluded. Profile V1 may disable `multi_primary_url` fallback until P0 ships |
 | Column digest detection | No false merge on shared URL |
 | Bias: split over false merge | Default when bridge `AMBIGUOUS` and BC low confidence |
 

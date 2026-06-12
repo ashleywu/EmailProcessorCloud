@@ -10,7 +10,7 @@
 - [`docs/interrupt-grouping.md`](docs/interrupt-grouping.md) — shared interrupt detection + generic grouping (planned)  
 - [`docs/map-reduce-radar-design.md`](docs/map-reduce-radar-design.md) — AINews path (unchanged)  
 
-**Status:** Implemented for Phase 5–6; this remains the checklist for validation and future Phase 7/8 follow-up.
+**Status:** **Partially implemented** — see [`docs/implementation-status.md`](docs/implementation-status.md) for per-item checklist. Content-unit agents and tests exist; sender profiles, interrupt grouping, and full orchestration are **planned**. Verify `daily_digest_agent.py` present before deploy.
 
 ---
 
@@ -79,14 +79,15 @@ See [`app/prompts/README.md`](app/prompts/README.md):
 
 ## III. Policies to implement (checklist)
 
-Copy from [`content-unit-classifiers.md`](docs/content-unit-classifiers.md):
+Policies (formerly `content-unit-classifiers.md`):
 
-- [ ] §1 Processors never classify  
-- [ ] §2–§7 Unified confidence bands on all sources  
-- [ ] §8 All-or-nothing email attach  
-- [ ] §9 Non-LLM confidence defaults (0.9 / 0.85 / 0.65)  
-- [ ] §10 Composer pair join  
-- [ ] Option B agent split (`ContentUnitClassifierAgent` + `RouterAgent` fallback + `ProcessorDispatcher`)  
+- [x] Option B agent split (`ContentUnitClassifierAgent` + `RouterAgent` fallback + `ProcessorDispatcher`) — **partial**
+- [x] `ContentUnitClassifierAgent` + unit processor prompts — **partial**
+- [ ] §1 Processors never classify on profile path — **planned** ([`sender-profiles.md`](docs/sender-profiles.md))
+- [ ] §2–§7 Unified confidence bands on all sources — **partial**
+- [ ] §8 All-or-nothing email attach — **partial**
+- [ ] §9 Non-LLM confidence defaults — **partial**
+- [ ] §10 Composer pair join — **partial**
 
 Constants: `CLASSIFIER_CONFIDENCE_PROCESS=0.75`, `CLASSIFIER_CONFIDENCE_MIN=0.55`.
 
@@ -126,4 +127,4 @@ Constants: `CLASSIFIER_CONFIDENCE_PROCESS=0.75`, `CLASSIFIER_CONFIDENCE_MIN=0.55
 
 ---
 
-**This document is the implementation checklist for Phase 6 (Milestone 8).** Classification policy details live in `docs/content-unit-classifiers.md`.
+**This document is the implementation checklist for Phase 6 (Milestone 8).** Profile and interrupt specs: [`sender-profiles.md`](docs/sender-profiles.md), [`interrupt-grouping.md`](docs/interrupt-grouping.md). Live vs planned: [`implementation-status.md`](docs/implementation-status.md).
