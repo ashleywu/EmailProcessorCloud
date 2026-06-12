@@ -70,10 +70,19 @@ See [`milestone8-content-unit-routing.md`](../milestone8-content-unit-routing.md
 
 ---
 
+## V1 executive decisions (locked)
+
+See [`sender-profiles.md`](sender-profiles.md) § V1 executive decisions.
+
+1. **`UNKNOWN_INTERRUPT` retained in article** — never hidden.
+2. **Profile SP1 (ByteByteGo)** — P1a interrupt detection only; **no** bridge, **no** BC prerequisite.
+3. **Structural counter-evidence only → generic fallback**; processor failure → fail + retry same profile.
+
 ## V1 profile rollout order
 
-1. **SP1** ByteByteGo — interrupt P1a + `single_tech_article` (no `multi_primary_url` fallback in V1)
+1. **SP1** ByteByteGo — P1a + `single_tech_article` (strip strippable → merge → one processor)
 2. **SP2** A Life Engineered — `leadership_essay` processor
 3. **SP3** Latent Space `swyx@` — `single_tech_longform` processor
-4. **SP5** AINews registry entry (refactor only)
-5. **Deferred:** Turing Post + generic aggregator map-reduce (Phase 8)
+4. **SP4** AINews registry entry (refactor only)
+5. **Parallel / later:** P1b generic bridge — for Every fallback only
+6. **Deferred:** Turing Post + Phase 8 map-reduce

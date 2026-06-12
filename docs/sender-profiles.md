@@ -4,6 +4,28 @@
 **Prerequisite (SP1):** [`interrupt-grouping.md`](interrupt-grouping.md) **P1a only** — interrupt detection + strippable/retained helpers. **Not** P1b generic bridge.  
 **Related:** [`map-reduce-radar-design.md`](map-reduce-radar-design.md) (AINews), [`milestone8-content-unit-routing.md`](../milestone8-content-unit-routing.md), `app/parsing/sender_match.py`
 
+## V1 executive decisions (locked)
+
+**Direction:** Sender Profile is the **primary** implementation bet — a **simple fast path**, not a layer on top of generic Boundary / Bridge / fallback machinery.
+
+**Profile happy path (all `single_*` senders):**
+
+```
+detect strippable noise → strip → merge article-body once → force category → one processor → one digest card
+```
+
+No Boundary Classifier. No interrupt bridge scoring. No generic pipeline unless **structural counter-evidence** fires.
+
+**Three rules — implement as written:**
+
+| # | Rule |
+|---|------|
+| 1 | **`UNKNOWN_INTERRUPT` stays in the article** — never hidden, never a separate unit ([`interrupt-grouping.md`](interrupt-grouping.md) §4.4) |
+| 2 | **ByteByteGo SP1 needs P1a only** — not P1b bridge, not BC, not `multi_primary_url` fallback in V1 |
+| 3 | **Only structural counter-evidence → generic fallback**; processor / LLM / schema failure → **fail email, retry same profile** — never switch pipeline mid-run |
+
+Generic content-unit pipeline (bridge, BC, per-unit classifier) remains for **Every**, **unknown senders**, and **explicit structural fallback** — not as a prerequisite for profile rollout.
+
 ---
 
 ## 1. Problem
