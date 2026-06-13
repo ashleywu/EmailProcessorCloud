@@ -4,7 +4,7 @@
 - **Milestone 2**: Gmail integration layer (`app/gmail/`) — `GmailClient`, `GmailFetcher`, `GmailLabeler`, `GmailSender`. Use `build_gmail_client(load_settings())` so OAuth paths stay centralized. All collaborators are mockable; tests run without network or real credentials.
 - **Milestone 3–5**: parsing (including **DOM sections** capped/merged via `normalize_sections_for_routing`), LLM **`RouterAgent` + section-scoped processors** (`run_section`), **`DailyDigestAgent`**, **`DigestComposer`**, quality gate (see **`milestone5.md`**).
 - **AINews / long Radar senders**: addresses in **`DAILY_DIGEST_MAP_REDUCE_RADAR_SENDERS`** bypass the section router and produce **`ainews_radar_digest`** under **AI Radar** only. See **`docs/map-reduce-radar-design.md`**.
-- **Content-unit routing (Phase 6 — design, not wired)**: group → **`ContentUnitClassifierAgent`** → extract-only processors; **`RouterAgent`** remains **fallback only** (Option B). Policies §1–§10 in **`docs/content-unit-classifiers.md`**; architecture **`docs/content-unit-routing-design.md`**; implementation checklist **`milestone8-content-unit-routing.md`**.
+- **Content-unit routing (Phase 5–6 implemented)**: group → **`ContentUnitClassifierAgent`** → extract-only processors; **`RouterAgent`** remains **fallback only** (Option B). Policies §1–§10 in **`docs/content-unit-classifiers.md`**; architecture **`docs/content-unit-routing-design.md`**; implementation checklist **`milestone8-content-unit-routing.md`**.
 - **Milestone 6**: CLI (`run-daily`, `preview-digest`, `show-config`), `pydantic-settings` loading (see `milestone6.md`).
 - **Milestone 7**: VPS deployment (`scripts/run-daily.sh`, `docs/deploy-vps.md` — checklist `milestone7.md`).
 

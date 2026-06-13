@@ -76,9 +76,9 @@ For **map-reduce senders**:
 
 **Never** feed the 8-cap merge into map-reduce chunking.
 
-### 3.3 Relationship to content-unit routing (Phase 6 — planned)
+### 3.3 Relationship to content-unit routing (Phase 6)
 
-AINews is a **hard override** early exit (Radar-only, no classifier). The planned content-unit path (`docs/content-unit-routing-design.md`) uses the same **path exclusivity** pattern:
+AINews is a **hard override** early exit (Radar-only, no classifier). The content-unit path (`docs/content-unit-routing-design.md`) uses the same **path exclusivity** pattern:
 
 | Path | Router | Unit classifier |
 |------|--------|-----------------|

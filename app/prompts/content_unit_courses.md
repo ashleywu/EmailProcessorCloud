@@ -1,6 +1,6 @@
 # Content unit — COURSES processor (extract only)
 
-**Status:** Phase 6 design — not wired.  
+**Status:** Phase 6 content-unit path.  
 **Schema:** `CoursesOutput`. Classification already chose **COURSES**.
 
 Reply with **only** JSON: `summary`, `actions[]`, `promo_blocks[]`. Short; do not amplify marketing copy.

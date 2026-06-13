@@ -8,8 +8,12 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.agents.ainews_radar_map_reduce_agent import AINewsRadarMapReduceAgent
+from app.agents.boundary_classifier_agent import BoundaryClassifierAgent
+from app.agents.content_unit_classifier_agent import ContentUnitClassifierAgent
 from app.agents.daily_digest_agent import DailyDigestAgent
 from app.agents.leadership_agent import LeadershipProcessorAgent
+from app.agents.leadership_essay_agent import LeadershipEssayProcessorAgent
+from app.agents.technical_longform_agent import TechnicalLongformProcessorAgent
 from app.agents.courses_agent import CoursesProcessorAgent
 from app.agents.radar_agent import RadarProcessorAgent
 from app.agents.router_agent import RouterAgent
@@ -88,6 +92,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     clr.set_defaults(handler=_cmd_clear_run_lock)
 
+    ape = sub.add_parser(
+        "audit-profile-email",
+        help=(
+            "Parse raw Gmail HTML for one SQLite email row and print profile-path "
+            "section audit (read-only; no LLM, no writes, no mail)."
+        ),
+    )
+    ape.add_argument(
+        "--email-id",
+        required=True,
+        type=int,
+        metavar="DB_EMAIL_ID",
+        help="Primary key from the emails table.",
+    )
+    ape.set_defaults(handler=_cmd_audit_profile_email)
+
     args = parser.parse_args(argv)
 
     handler = getattr(args, "handler", None)
@@ -156,6 +176,8 @@ def _cmd_run_daily(_args: argparse.Namespace) -> int:
             technology_agent=TechnologyProcessorAgent(llm, model=llm.processor_model),
             radar_agent=RadarProcessorAgent(llm, model=llm.processor_model),
             leadership_agent=LeadershipProcessorAgent(llm, model=llm.processor_model),
+            leadership_essay_agent=LeadershipEssayProcessorAgent(llm, model=llm.processor_model),
+            technical_longform_agent=TechnicalLongformProcessorAgent(llm, model=llm.processor_model),
             courses_agent=CoursesProcessorAgent(llm, model=llm.processor_model),
             map_reduce_radar_agent=AINewsRadarMapReduceAgent(
                 llm,
@@ -164,6 +186,15 @@ def _cmd_run_daily(_args: argparse.Namespace) -> int:
                 max_map_calls=settings.map_reduce_max_map_calls,
             ),
             map_reduce_radar_senders=settings.map_reduce_radar_senders,
+            content_unit_classifier_agent=ContentUnitClassifierAgent(
+                llm,
+                model=llm.router_model,
+            ),
+            boundary_classifier_agent=BoundaryClassifierAgent(
+                llm,
+                model=llm.router_model,
+            ),
+            enable_content_unit_routing=True,
             composer=DigestComposer(),
             quality_gate=DigestQualityGateAgent(),
             labeler=GmailLabeler(client),
@@ -178,33 +209,6 @@ def _cmd_run_daily(_args: argparse.Namespace) -> int:
         return 0
     finally:
         repo.close()
-
-
-def _cmd_clear_run_lock(_args: argparse.Namespace) -> int:
-    try:
-        settings = load_settings()
-    except ValidationError as exc:
-        print(f"Configuration error: {exc}", file=sys.stderr)
-        return 1
-
-    conn = open_initialized(settings.db_path)
-    try:
-        row = conn.execute(
-            "SELECT 1 FROM run_locks WHERE lock_name = ?",
-            (settings.lock_name,),
-        ).fetchone()
-        conn.execute(
-            "DELETE FROM run_locks WHERE lock_name = ?",
-            (settings.lock_name,),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    if row is None:
-        print(f"No run-lock row for lock_name={settings.lock_name!r} — nothing to do.")
-        return 0
-    print(f"Cleared run lock {settings.lock_name!r}.")
-    return 0
 
 
 def _cmd_preview_digest(args: argparse.Namespace) -> int:
@@ -237,6 +241,39 @@ def _cmd_preview_digest(args: argparse.Namespace) -> int:
         return 0
     finally:
         repo.close()
+
+
+def _cmd_clear_run_lock(_args: argparse.Namespace) -> int:
+    try:
+        settings = load_settings()
+    except ValidationError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 1
+
+    conn = open_initialized(settings.db_path)
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM run_locks WHERE lock_name = ?",
+            (settings.lock_name,),
+        ).fetchone()
+        conn.execute(
+            "DELETE FROM run_locks WHERE lock_name = ?",
+            (settings.lock_name,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    if row is None:
+        print(f"No run-lock row for lock_name={settings.lock_name!r} — nothing to do.")
+        return 0
+    print(f"Cleared run lock {settings.lock_name!r}.")
+    return 0
+
+
+def _cmd_audit_profile_email(args: argparse.Namespace) -> int:
+    from app.audit.profile_email import audit_profile_email_cli
+
+    return audit_profile_email_cli(email_id=args.email_id, db_path=None)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
@@ -72,13 +73,20 @@ class TechnologySectionOutput(BaseModel):
 
     title: str = Field(..., max_length=500)
     core_pain_point: str = Field(..., max_length=240)
-    original_url: str = Field(..., description="Primary article URL copied from candidate list.")
+    original_url: str | None = Field(
+        default=None,
+        description="Primary article URL copied from candidate list; null when none applies.",
+    )
     diagrams: list[Diagram] = Field(default_factory=list)
 
     @field_validator("original_url")
     @classmethod
-    def _https_original(cls, v: str) -> str:
+    def _https_original(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         s = str(v).strip()
+        if not s:
+            return None
         if not s.startswith("https://"):
             raise ValueError("original_url must start with https://")
         return s
@@ -87,7 +95,7 @@ class TechnologySectionOutput(BaseModel):
     def _original_url_allowlisted(self, info: ValidationInfo) -> TechnologySectionOutput:
         ctx = info.context or {}
         allow = ctx.get("allowed_article_urls")
-        if allow is None:
+        if allow is None or self.original_url is None:
             return self
         if self.original_url not in set(allow):
             raise ValueError("original_url must appear in candidate article URLs from this section")
@@ -216,6 +224,113 @@ class LeadershipSignal(BaseModel):
         default=None,
         description="URL when the signal refers to a course, product, or article (copy from email links).",
     )
+
+
+LEADERSHIP_ESSAY_OUTPUT_KIND = "leadership_essay"
+TECHNICAL_LONGFORM_OUTPUT_KIND = "technical_longform"
+
+
+class TechnicalLongformOutput(BaseModel):
+    """Profile SP3 — one merged Latent Space tech longform (interview or essay)."""
+
+    title: str = Field(..., max_length=500)
+    format: Literal["interview", "essay", "transcript", "other"]
+    central_topic: str = Field(..., min_length=1, max_length=800)
+    key_technical_insights: list[str] = Field(default_factory=list)
+    architecture_or_workflow_insights: list[str] = Field(default_factory=list)
+    tradeoffs_or_disagreements: list[str] = Field(default_factory=list)
+    practical_takeaways: list[str] = Field(default_factory=list)
+    original_url: str | None = Field(
+        default=None,
+        description="Primary article URL copied from candidate list; null when none applies.",
+    )
+
+    @field_validator("original_url")
+    @classmethod
+    def _https_original(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if not s.startswith("https://"):
+            raise ValueError("original_url must start with https://")
+        return s
+
+    @model_validator(mode="after")
+    def _non_empty(self) -> TechnicalLongformOutput:
+        if (
+            self.key_technical_insights
+            or self.architecture_or_workflow_insights
+            or self.tradeoffs_or_disagreements
+            or self.practical_takeaways
+        ):
+            return self
+        raise ValueError(
+            "Provide at least one of key_technical_insights, architecture_or_workflow_insights, "
+            "tradeoffs_or_disagreements, or practical_takeaways.",
+        )
+
+    @model_validator(mode="after")
+    def _original_url_allowlisted(self, info: ValidationInfo) -> TechnicalLongformOutput:
+        ctx = info.context or {}
+        allow = ctx.get("allowed_article_urls")
+        if allow is None or self.original_url is None:
+            return self
+        if self.original_url not in set(allow):
+            raise ValueError("original_url must appear in candidate article URLs from this unit")
+        return self
+
+
+class LeadershipEssayOutput(BaseModel):
+    """Profile SP2 — one merged A Life Engineered leadership essay unit."""
+
+    title: str = Field(..., max_length=500)
+    core_thesis: str = Field(..., min_length=1, max_length=800)
+    leadership_signals: list[str] = Field(default_factory=list)
+    author_action_items: list[str] = Field(default_factory=list)
+    senior_engineer_actions: list[str] = Field(default_factory=list)
+    notable_examples: list[str] = Field(default_factory=list)
+    original_url: str | None = Field(
+        default=None,
+        description="Primary article URL copied from candidate list; null when none applies.",
+    )
+
+    @field_validator("original_url")
+    @classmethod
+    def _https_original(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if not s.startswith("https://"):
+            raise ValueError("original_url must start with https://")
+        return s
+
+    @model_validator(mode="after")
+    def _non_empty(self) -> LeadershipEssayOutput:
+        if (
+            self.leadership_signals
+            or self.author_action_items
+            or self.senior_engineer_actions
+            or self.notable_examples
+        ):
+            return self
+        raise ValueError(
+            "Provide at least one of leadership_signals, author_action_items, "
+            "senior_engineer_actions, or notable_examples.",
+        )
+
+    @model_validator(mode="after")
+    def _original_url_allowlisted(self, info: ValidationInfo) -> LeadershipEssayOutput:
+        ctx = info.context or {}
+        allow = ctx.get("allowed_article_urls")
+        if allow is None or self.original_url is None:
+            return self
+        if self.original_url not in set(allow):
+            raise ValueError("original_url must appear in candidate article URLs from this unit")
+        return self
 
 
 class LeadershipColumnOutput(BaseModel):

@@ -1,6 +1,6 @@
 # Content unit — LEADERSHIP processor (extract only)
 
-**Status:** Phase 6 design — not wired.  
+**Status:** Phase 6 content-unit path.  
 **Schema:** `LeadershipSectionOutput`. Classification already chose **LEADERSHIP**.
 
 Reply with **only** JSON: optional `summary`, `signals[]` with `theme`, `insight`, **`actionable_item`**, optional `link`.

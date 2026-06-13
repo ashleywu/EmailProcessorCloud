@@ -1,6 +1,6 @@
 # Content unit — RADAR processor (extract only)
 
-**Status:** Phase 6 design — not wired.  
+**Status:** Phase 6 content-unit path.  
 **Schema:** `RadarOutput`. Classification already chose **RADAR**.
 
 Reply with **only** JSON: `summary` (optional), `items[]` with `entity`, `impact_or_action`, optional `url`.

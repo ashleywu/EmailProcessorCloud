@@ -32,6 +32,11 @@ fi
 source "${REPO_ROOT}/.venv/bin/activate"
 export PYTHONUNBUFFERED=1
 
+# Keep editable install in sync after git pull (avoids ModuleNotFoundError on cron).
+"${REPO_ROOT}/.venv/bin/pip" install -e "${REPO_ROOT}[gmail]" -q >>"${log_file}" 2>&1 || {
+  echo "warning: pip install -e failed; continuing with existing venv" >>"${log_file}"
+}
+
 {
   printf '\n======== %s ========\n' "$(date '+%Y-%m-%d %H:%M:%S %z')"
   python -m app.main run-daily

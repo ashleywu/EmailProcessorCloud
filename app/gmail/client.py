@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
@@ -110,6 +111,17 @@ class GmailClient:
         self._creds = self._load_credentials()
         return self._build_service(self._creds)
 
+    def _is_interactive_oauth_allowed(self) -> bool:
+        """Browser-based OAuth is only for local dev — not cron/headless VPS."""
+
+        import os
+
+        if os.environ.get("GMAIL_OAUTH_INTERACTIVE", "").strip() in {"1", "true", "yes"}:
+            return True
+        if os.environ.get("DISPLAY"):
+            return True
+        return sys.stdin.isatty() and sys.stdout.isatty()
+
     def _load_credentials(self) -> Any:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
@@ -131,15 +143,30 @@ class GmailClient:
                 creds.refresh(Request())
                 self._persist_token(creds)
                 return creds
-            except RefreshError:
-                # revoked / expired refresh token — drop cache file and redo browser consent
-                if self._token_path and self._token_path.exists():
-                    self._token_path.unlink(missing_ok=True)
-                creds = None
+            except RefreshError as exc:
+                if self._is_interactive_oauth_allowed():
+                    if self._token_path and self._token_path.exists():
+                        self._token_path.unlink(missing_ok=True)
+                    creds = None
+                else:
+                    msg = (
+                        "Gmail OAuth refresh failed on a headless host (cron/VPS). "
+                        "Re-authorize on a machine with a browser, copy "
+                        f"{self._token_path} to the server, or run once with "
+                        "GMAIL_OAUTH_INTERACTIVE=1. "
+                        f"Refresh error: {exc}"
+                    )
+                    raise RuntimeError(msg) from exc
 
         if self._credentials_path is None:
             raise RuntimeError(
                 "GmailClient: no valid token and no credentials_path provided."
+            )
+        if not self._is_interactive_oauth_allowed():
+            raise RuntimeError(
+                "Gmail token missing or invalid; interactive OAuth is disabled on "
+                "this headless host. Refresh secrets/token.json from a machine with a "
+                "browser (see docs/deploy-vps.md)."
             )
         flow = InstalledAppFlow.from_client_secrets_file(
             str(self._credentials_path), list(self._scopes)

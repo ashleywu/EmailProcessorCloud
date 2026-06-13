@@ -78,3 +78,16 @@ def test_close_clears_cached_service() -> None:
     client.close()
     _ = client.service
     assert len(seen) == 2
+
+
+def test_headless_host_rejects_interactive_oauth_without_token(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    creds_path = tmp_path / "credentials.json"
+    creds_path.write_text('{"installed":{"client_id":"x","client_secret":"y"}}', encoding="utf-8")
+    client = GmailClient(
+        credentials_path=creds_path,
+        token_path=tmp_path / "missing-token.json",
+    )
+    with pytest.raises(RuntimeError, match="headless host"):
+        _ = client.service

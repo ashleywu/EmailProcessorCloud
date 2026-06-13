@@ -10,6 +10,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from app.models.content_units import (
+    ClassificationRoutingSource,
+    ContentUnitClassificationResult,
+)
 from app.models.digest import ProcessedEmail
 from app.models.email import EmailInput
 from app.models.outputs import (
@@ -20,6 +24,12 @@ from app.models.outputs import (
 )
 from app.models.section import EmailSection
 from app.parsing.section_caps import compute_section_content_hash
+from app.processing.profile_executor import (
+    compute_profile_merged_content_hash,
+    profile_processor_output_kind,
+    resolve_profile_plan,
+)
+from app.processing.sender_profiles import lookup_sender_profile
 from app.storage.db import init_schema, open_initialized
 
 
@@ -43,6 +53,7 @@ class AgentOutputRecord:
     payload: str
     created_at: str
     email_section_id: int | None = None
+    content_unit_key: str | None = None
     section_key: str | None = None
     category: str | None = None
     section_order_index: int | None = None
@@ -72,6 +83,17 @@ class DigestPreviewRecord:
     digest_id: int
     status: str
     body_html: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class EmailRecord:
+    """Read-only email metadata row."""
+
+    id: int
+    message_id: str
+    subject: str | None
+    sender: str | None
+    status: str
 
 
 class StateRepository:
@@ -133,6 +155,7 @@ class StateRepository:
         output: BaseModel,
         *,
         email_section_id: int | None = None,
+        content_unit_key: str | None = None,
         category: str | None = None,
     ) -> int:
         """Persist one agent JSON row.
@@ -143,6 +166,9 @@ class StateRepository:
 
         payload = output.model_dump_json()
         canonical_category = category
+        unit_key = content_unit_key.strip() if isinstance(content_unit_key, str) else None
+        if unit_key == "":
+            unit_key = None
 
         if kind == "router":
             decision = RouterDecision.model_validate(output)
@@ -169,11 +195,11 @@ class StateRepository:
         cur = self._conn.execute(
             """
             INSERT INTO agent_outputs (
-              email_id, email_section_id, kind, category, payload, created_at
+              email_id, email_section_id, content_unit_key, kind, category, payload, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (email_id, email_section_id, kind, canonical_category, payload, now),
+            (email_id, email_section_id, unit_key, kind, canonical_category, payload, now),
         )
         self._conn.commit()
         return int(cur.lastrowid)
@@ -311,7 +337,8 @@ class StateRepository:
 
         row = self._conn.execute(
             """
-            SELECT ao.id, ao.email_id, ao.email_section_id, ao.kind, ao.category, ao.payload,
+            SELECT ao.id, ao.email_id, ao.email_section_id, ao.content_unit_key,
+                   ao.kind, ao.category, ao.payload,
                    ao.created_at, es.section_key, es.order_index AS section_order_index,
                    es.heading AS section_heading
             FROM agent_outputs ao
@@ -326,6 +353,33 @@ class StateRepository:
         ).fetchone()
         return _row_to_agent_output(row) if row is not None else None
 
+    def get_latest_agent_output_for_unit_kind(
+        self,
+        email_id: int,
+        *,
+        content_unit_key: str,
+        kind: str,
+    ) -> AgentOutputRecord | None:
+        """Return newest ``agent_outputs`` row for `(email_id, content_unit_key, kind)`."""
+
+        row = self._conn.execute(
+            """
+            SELECT ao.id, ao.email_id, ao.email_section_id, ao.content_unit_key,
+                   ao.kind, ao.category, ao.payload, ao.created_at,
+                   es.section_key, es.order_index AS section_order_index,
+                   es.heading AS section_heading
+            FROM agent_outputs ao
+            LEFT JOIN email_sections es ON es.id = ao.email_section_id
+            WHERE ao.email_id = ?
+              AND ao.content_unit_key = ?
+              AND ao.kind = ?
+            ORDER BY ao.id DESC
+            LIMIT 1
+            """,
+            (email_id, content_unit_key, kind),
+        ).fetchone()
+        return _row_to_agent_output(row) if row is not None else None
+
     def clear_section_scoped_agent_outputs(self, email_id: int) -> None:
         """Remove per-section router/processor rows (map-reduce reprocess)."""
 
@@ -334,6 +388,139 @@ class StateRepository:
             (email_id,),
         )
         self._conn.commit()
+
+    def clear_profile_unit_outputs(
+        self,
+        email_id: int,
+        *,
+        content_unit_key: str,
+        processor_kind: str,
+    ) -> None:
+        """Remove profile-path classifier + processor rows for one content unit."""
+
+        self._conn.execute(
+            """
+            DELETE FROM agent_outputs
+            WHERE email_id = ?
+              AND content_unit_key = ?
+              AND kind IN ('classifier', ?)
+            """,
+            (email_id, content_unit_key, processor_kind),
+        )
+        self._conn.commit()
+
+    def clear_orphan_content_unit_outputs(
+        self,
+        email_id: int,
+        *,
+        keep_content_unit_key: str,
+    ) -> None:
+        """Drop generic-pipeline unit rows after profile fast path wins (keep one unit key)."""
+
+        self._conn.execute(
+            """
+            DELETE FROM agent_outputs
+            WHERE email_id = ?
+              AND content_unit_key IS NOT NULL
+              AND content_unit_key != ?
+            """,
+            (email_id, keep_content_unit_key),
+        )
+        self._conn.commit()
+
+    def clear_all_content_unit_agent_outputs(self, email_id: int) -> None:
+        """Remove all content-unit scoped rows (profile reprocess or generic reset)."""
+
+        self._conn.execute(
+            """
+            DELETE FROM agent_outputs
+            WHERE email_id = ? AND content_unit_key IS NOT NULL
+            """,
+            (email_id,),
+        )
+        self._conn.commit()
+
+    def profile_unit_outputs_cached(
+        self,
+        email_id: int,
+        *,
+        content_unit_key: str,
+        processor_kind: str,
+        merged_content_hash: str,
+    ) -> bool:
+        """True when classifier + processor exist for profile path with matching merged hash."""
+
+        clf_row = self.get_latest_agent_output_for_unit_kind(
+            email_id,
+            content_unit_key=content_unit_key,
+            kind="classifier",
+        )
+        if clf_row is None:
+            return False
+        try:
+            classification = ContentUnitClassificationResult.model_validate_json(clf_row.payload)
+        except Exception:
+            return False
+        if classification.routing_source != ClassificationRoutingSource.SENDER_PROFILE:
+            return False
+        if classification.content_hash != merged_content_hash:
+            return False
+        if classification.processor_kind != processor_kind:
+            return False
+        proc_row = self.get_latest_agent_output_for_unit_kind(
+            email_id,
+            content_unit_key=content_unit_key,
+            kind=processor_kind,
+        )
+        return proc_row is not None
+
+    def try_reuse_profile_complete_outputs(self, email_id: int) -> frozenset[RouteCategory] | None:
+        """Reuse profile fast-path outputs when stored sections + merged hash still match."""
+
+        sender = self.get_email_sender_by_id(email_id)
+        profile = lookup_sender_profile(sender)
+        if profile is None:
+            return None
+
+        section_records = self.list_email_sections(email_id)
+        if not section_records:
+            return None
+
+        sections = [
+            EmailSection(
+                section_id=rec.section_key,
+                order_index=rec.order_index,
+                heading=rec.heading,
+                text=rec.text,
+                links=json.loads(rec.links_json),
+                image_urls=json.loads(rec.image_urls_json),
+            )
+            for rec in section_records
+        ]
+        from app.parsing.parser import ParsedHtmlResult
+
+        parsed = ParsedHtmlResult(
+            plain_text="",
+            plain_text_chars=0,
+            links=[],
+            image_urls=[],
+            sections=sections,
+        )
+        plan = resolve_profile_plan(profile, parsed)
+        if plan is None:
+            return None
+
+        section_hashes = {rec.section_key: rec.content_hash for rec in section_records}
+        merged_hash = compute_profile_merged_content_hash(plan, section_hashes=section_hashes)
+        processor_kind = profile_processor_output_kind(profile)
+        if not self.profile_unit_outputs_cached(
+            email_id,
+            content_unit_key=plan.article_unit.content_unit_key,
+            processor_kind=processor_kind,
+            merged_content_hash=merged_hash,
+        ):
+            return None
+        return frozenset({profile.default_category})
 
     def map_reduce_radar_digest_cached(self, email_id: int) -> bool:
         row = self._conn.execute(
@@ -507,16 +694,17 @@ class StateRepository:
             return []
         placeholders = ",".join("?" for _ in ids)
         sql = f"""
-            SELECT ao.id, ao.email_id, ao.email_section_id, ao.kind, ao.category, ao.payload, ao.created_at,
+            SELECT ao.id, ao.email_id, ao.email_section_id, ao.content_unit_key,
+                   ao.kind, ao.category, ao.payload, ao.created_at,
                    es.section_key, es.order_index AS section_order_index,
                    es.heading AS section_heading
             FROM agent_outputs ao
             LEFT JOIN email_sections es ON es.id = ao.email_section_id
             INNER JOIN (
-              SELECT email_id, email_section_id, kind, MAX(id) AS max_id
+              SELECT email_id, email_section_id, content_unit_key, kind, MAX(id) AS max_id
               FROM agent_outputs
               WHERE email_id IN ({placeholders})
-              GROUP BY email_id, email_section_id, kind
+              GROUP BY email_id, email_section_id, content_unit_key, kind
             ) t
               ON ao.email_id = t.email_id
              AND ao.kind = t.kind
@@ -524,6 +712,10 @@ class StateRepository:
              AND (
                    (ao.email_section_id IS NULL AND t.email_section_id IS NULL)
                 OR (ao.email_section_id = t.email_section_id)
+             )
+             AND (
+                   (ao.content_unit_key IS NULL AND t.content_unit_key IS NULL)
+                OR (ao.content_unit_key = t.content_unit_key)
              )
             ORDER BY ao.email_id,
                      (es.order_index IS NULL) ASC,
@@ -544,7 +736,11 @@ class StateRepository:
         return self.get_latest_outputs_by_email_ids(email_ids)
 
     def try_reuse_complete_outputs(self, email_id: int) -> frozenset[RouteCategory] | None:
-        """Reuse persisted outputs when complete for the active pipeline shape."""
+        """Reuse persisted outputs when complete for the active pipeline shape.
+
+        Profile fast-path reuse is checked only after ``replace_email_sections`` in
+        ``DailyDigestAgent`` so merged ``content_hash`` reflects the latest parse.
+        """
 
         if self.map_reduce_radar_digest_cached(email_id):
             return frozenset({RouteCategory.RADAR})
@@ -573,6 +769,31 @@ class StateRepository:
             return None
         s = str(v).strip()
         return s or None
+
+    def get_email_by_id(self, email_id: int) -> EmailRecord | None:
+        row = self._conn.execute(
+            """
+            SELECT id, message_id, subject, sender, status
+            FROM emails
+            WHERE id = ?
+            """,
+            (email_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        sender = row["sender"]
+        sender_s = str(sender).strip() if sender is not None else None
+        if sender_s == "":
+            sender_s = None
+        subject = row["subject"]
+        subject_s = str(subject) if subject is not None else None
+        return EmailRecord(
+            id=int(row["id"]),
+            message_id=str(row["message_id"]),
+            subject=subject_s,
+            sender=sender_s,
+            status=str(row["status"]),
+        )
 
     def fetch_unprocessed_emails(self) -> list[ProcessedEmail]:
         rows = self._conn.execute(
@@ -651,6 +872,11 @@ def _row_to_agent_output(r: sqlite3.Row) -> AgentOutputRecord:
         payload=str(r["payload"]),
         created_at=str(r["created_at"]),
         email_section_id=(int(r["email_section_id"]) if r["email_section_id"] is not None else None),
+        content_unit_key=(
+            str(r["content_unit_key"])
+            if "content_unit_key" in r.keys() and r["content_unit_key"] is not None
+            else None
+        ),
         section_key=str(sec_key) if sec_key is not None else None,
         category=str(r["category"]) if r["category"] is not None else None,
         section_order_index=int(soi) if soi is not None else None,

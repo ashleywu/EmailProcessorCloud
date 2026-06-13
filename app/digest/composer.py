@@ -8,14 +8,22 @@ from typing import Any
 from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from app.models.content_units import (
+    ClassificationRoutingSource,
+    ContentUnitClassificationResult,
+)
 from app.models.outputs import (
     AINewsRadarCardRole,
     AINewsRadarDigestOutput,
     MAP_REDUCE_RADAR_DIGEST_KIND,
     CoursesOutput,
     Diagram,
+    LeadershipEssayOutput,
     LeadershipSectionOutput,
     LeadershipSignal,
+    LEADERSHIP_ESSAY_OUTPUT_KIND,
+    TECHNICAL_LONGFORM_OUTPUT_KIND,
+    TechnicalLongformOutput,
     RadarOutput,
     RouteCategory,
     TechnologySectionOutput,
@@ -56,6 +64,48 @@ def _courses_digest_row(
         "promo_blocks": [
             {"text": b.text, "cta": {"label": b.cta.label, "url": b.cta.url}} for b in m.promo_blocks
         ],
+    }
+
+
+def _technical_longform_digest_row(
+    *,
+    email_subject: str,
+    from_line: str | None,
+    section_heading: str | None,
+    longform: TechnicalLongformOutput,
+) -> dict[str, Any]:
+    return {
+        "email_subject": email_subject,
+        "source_sender": from_line,
+        "section_heading": section_heading,
+        "title": longform.title,
+        "article_url": longform.original_url,
+        "core_pain_point": longform.central_topic,
+        "format": longform.format,
+        "key_technical_insights": list(longform.key_technical_insights),
+        "architecture_or_workflow_insights": list(longform.architecture_or_workflow_insights),
+        "tradeoffs_or_disagreements": list(longform.tradeoffs_or_disagreements),
+        "practical_takeaways": list(longform.practical_takeaways),
+        "diagrams": [],
+    }
+
+
+def _leadership_essay_digest_row(
+    *,
+    email_subject: str,
+    from_line: str | None,
+    essay: LeadershipEssayOutput,
+) -> dict[str, Any]:
+    return {
+        "subject": email_subject,
+        "source_sender": from_line,
+        "title": essay.title,
+        "core_thesis": essay.core_thesis,
+        "leadership_signals": list(essay.leadership_signals),
+        "author_action_items": list(essay.author_action_items),
+        "senior_engineer_actions": list(essay.senior_engineer_actions),
+        "notable_examples": list(essay.notable_examples),
+        "original_url": essay.original_url,
     }
 
 
@@ -192,12 +242,23 @@ _KIND_ORDER_FOR_SECTION = {
     "ainews_radar_digest": 15,
     "radar": 20,
     "leadership": 30,
+    LEADERSHIP_ESSAY_OUTPUT_KIND: 31,
+    TECHNICAL_LONGFORM_OUTPUT_KIND: 32,
     "courses": 40,
     "noise": 41,
 }
 
 _PROCESSOR_KINDS = frozenset(
-    {"technology", "radar", "ainews_radar_digest", "leadership", "courses", "noise"},
+    {
+        "technology",
+        "radar",
+        "ainews_radar_digest",
+        "leadership",
+        LEADERSHIP_ESSAY_OUTPUT_KIND,
+        TECHNICAL_LONGFORM_OUTPUT_KIND,
+        "courses",
+        "noise",
+    },
 )
 
 
@@ -210,6 +271,10 @@ def _valid_category_kind_pair(cat: RouteCategory, kind: str) -> bool:
         return cat == RouteCategory.RADAR
     if kind == "leadership":
         return cat == RouteCategory.LEADERSHIP
+    if kind == LEADERSHIP_ESSAY_OUTPUT_KIND:
+        return cat == RouteCategory.LEADERSHIP
+    if kind == TECHNICAL_LONGFORM_OUTPUT_KIND:
+        return cat == RouteCategory.TECHNOLOGY
     if kind == "courses":
         return cat == RouteCategory.COURSES
     if kind == "noise":
@@ -258,10 +323,26 @@ class DigestComposer:
             if r.kind == MAP_REDUCE_RADAR_DIGEST_KIND and r.email_section_id is None:
                 map_reduce_digest_email_ids.add(r.email_id)
 
+        classifier_keys: set[tuple[int, str]] = set()
+        profile_unit_key_by_email: dict[int, str] = {}
+        for r in output_rows:
+            if r.kind == "classifier" and r.content_unit_key:
+                classifier_keys.add((r.email_id, r.content_unit_key))
+                try:
+                    clf = ContentUnitClassificationResult.model_validate_json(r.payload)
+                except Exception:
+                    continue
+                if clf.routing_source == ClassificationRoutingSource.SENDER_PROFILE:
+                    profile_unit_key_by_email[r.email_id] = r.content_unit_key
+
         for r in output_rows:
             if r.kind not in _PROCESSOR_KINDS:
                 continue
-            if r.email_section_id is None and r.kind != MAP_REDUCE_RADAR_DIGEST_KIND:
+            if (
+                r.email_section_id is None
+                and r.content_unit_key is None
+                and r.kind != MAP_REDUCE_RADAR_DIGEST_KIND
+            ):
                 cat_disp = repr(r.category)
                 warnings.append(
                     "composition_legacy_email_level_processor: "
@@ -277,14 +358,32 @@ class DigestComposer:
         proc_rows = [
             row
             for row in output_rows
-            if row.email_section_id is not None
+            if (row.email_section_id is not None or row.content_unit_key is not None)
             and row.kind in _PROCESSOR_KINDS
             and row.email_id not in map_reduce_digest_email_ids
+            and (row.content_unit_key is None or (row.email_id, row.content_unit_key) in classifier_keys)
+            and (
+                row.content_unit_key is None
+                or row.email_id not in profile_unit_key_by_email
+                or row.content_unit_key == profile_unit_key_by_email[row.email_id]
+            )
         ]
+        for row in output_rows:
+            if (
+                row.content_unit_key is not None
+                and row.kind in _PROCESSOR_KINDS
+                and (row.email_id, row.content_unit_key) not in classifier_keys
+            ):
+                warnings.append(
+                    "composition_unit_processor_without_classifier: "
+                    f"agent_output_id={row.id} email_id={row.email_id} "
+                    f"content_unit_key={row.content_unit_key!r} kind={row.kind!r}",
+                )
         proc_rows.sort(
             key=lambda row: (
                 row.email_id,
                 row.section_order_index if row.section_order_index is not None else 2_147_483_647,
+                row.content_unit_key or "",
                 _KIND_ORDER_FOR_SECTION.get(row.kind, 99),
                 row.id,
             ),
@@ -295,6 +394,7 @@ class DigestComposer:
         ai_radar_recap: list[dict[str, Any]] = []
         ai_radar: list[dict[str, Any]] = []
         leadership_signals: list[dict[str, Any]] = []
+        leadership_essays: list[dict[str, Any]] = []
         courses: list[dict[str, Any]] = []
 
         for row in sorted(digest_rows, key=lambda r: (r.email_id, r.id)):
@@ -365,6 +465,16 @@ class DigestComposer:
                         "diagrams": _diagram_rows(m.diagrams),
                     },
                 )
+            elif cat == RouteCategory.TECHNOLOGY and row.kind == TECHNICAL_LONGFORM_OUTPUT_KIND:
+                longform = TechnicalLongformOutput.model_validate_json(row.payload)
+                technical_index.append(
+                    _technical_longform_digest_row(
+                        email_subject=email_subject,
+                        from_line=from_line,
+                        section_heading=heading,
+                        longform=longform,
+                    ),
+                )
             elif cat == RouteCategory.RADAR and row.kind == "radar":
                 radar_m = RadarOutput.model_validate_json(row.payload)
                 ai_radar.append(
@@ -373,6 +483,15 @@ class DigestComposer:
                         from_line=from_line,
                         section_heading=heading,
                         m=radar_m,
+                    ),
+                )
+            elif cat == RouteCategory.LEADERSHIP and row.kind == LEADERSHIP_ESSAY_OUTPUT_KIND:
+                essay = LeadershipEssayOutput.model_validate_json(row.payload)
+                leadership_essays.append(
+                    _leadership_essay_digest_row(
+                        email_subject=email_subject,
+                        from_line=from_line,
+                        essay=essay,
                     ),
                 )
             elif cat == RouteCategory.LEADERSHIP and row.kind == "leadership":
@@ -412,6 +531,7 @@ class DigestComposer:
             ai_radar_recap=ai_radar_recap,
             ai_radar=ai_radar,
             leadership_signals=leadership_signals,
+            leadership_essays=leadership_essays,
             courses=courses,
         )
         if revision_problems:

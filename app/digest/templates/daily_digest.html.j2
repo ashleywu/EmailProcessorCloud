@@ -36,6 +36,39 @@
           <div>{{ it.title | e }}</div>
         {% endif %}
         <div>{{ it.core_pain_point | e }}</div>
+        {% if it.format %}<div class="sub">Format: {{ it.format | e }}</div>{% endif %}
+        {% if it.key_technical_insights %}
+        <div class="sub"><strong>Key technical insights</strong></div>
+        <ul>
+        {% for line in it.key_technical_insights %}
+          <li>{{ line | e }}</li>
+        {% endfor %}
+        </ul>
+        {% endif %}
+        {% if it.architecture_or_workflow_insights %}
+        <div class="sub"><strong>Architecture / workflow</strong></div>
+        <ul>
+        {% for line in it.architecture_or_workflow_insights %}
+          <li>{{ line | e }}</li>
+        {% endfor %}
+        </ul>
+        {% endif %}
+        {% if it.tradeoffs_or_disagreements %}
+        <div class="sub"><strong>Tradeoffs / disagreements</strong></div>
+        <ul>
+        {% for line in it.tradeoffs_or_disagreements %}
+          <li>{{ line | e }}</li>
+        {% endfor %}
+        </ul>
+        {% endif %}
+        {% if it.practical_takeaways %}
+        <div class="sub"><strong>Practical takeaways</strong></div>
+        <ul>
+        {% for line in it.practical_takeaways %}
+          <li>{{ line | e }}</li>
+        {% endfor %}
+        </ul>
+        {% endif %}
       </div>
     {% endif %}
     {% if it.diagrams %}
@@ -141,6 +174,48 @@
 {% endif %}
 
 <h2>Leadership Signals</h2>
+{% if leadership_essays %}
+  {% for it in leadership_essays %}
+  <div class="item">
+    <div><strong>{{ it.title | e }}</strong></div>
+    {% if it.source_sender %}<div class="sub">From: {{ it.source_sender | e }}</div>{% endif %}
+    {% if it.core_thesis %}<p>{{ it.core_thesis | e }}</p>{% endif %}
+    {% if it.leadership_signals %}
+    <div class="sub"><strong>Leadership signals</strong></div>
+    <ul>
+    {% for signal in it.leadership_signals %}
+      <li>{{ signal | e }}</li>
+    {% endfor %}
+    </ul>
+    {% endif %}
+    {% if it.author_action_items %}
+    <div class="sub"><strong>Author action items</strong> (from the essay)</div>
+    <ul>
+    {% for item in it.author_action_items %}
+      <li>{{ item | e }}</li>
+    {% endfor %}
+    </ul>
+    {% endif %}
+    {% if it.senior_engineer_actions %}
+    <div class="sub"><strong>Senior engineer actions</strong> (reader takeaways)</div>
+    <ul>
+    {% for item in it.senior_engineer_actions %}
+      <li>{{ item | e }}</li>
+    {% endfor %}
+    </ul>
+    {% endif %}
+    {% if it.notable_examples %}
+    <div class="sub"><strong>Notable examples</strong></div>
+    <ul>
+    {% for ex in it.notable_examples %}
+      <li>{{ ex | e }}</li>
+    {% endfor %}
+    </ul>
+    {% endif %}
+    {% if it.original_url %}<div class="sub"><a href="{{ it.original_url | e }}">{{ it.original_url | e }}</a></div>{% endif %}
+  </div>
+  {% endfor %}
+{% endif %}
 {% if leadership_signals %}
   {% for it in leadership_signals %}
   <div class="item">
@@ -155,7 +230,7 @@
     </ul>
   </div>
   {% endfor %}
-{% else %}
+{% elif not leadership_essays %}
   <p class="sub">No items in this section.</p>
 {% endif %}
 

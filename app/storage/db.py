@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS agent_outputs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
   email_section_id INTEGER NULL REFERENCES email_sections(id) ON DELETE CASCADE,
+  content_unit_key TEXT NULL,
   kind TEXT NOT NULL,
   category TEXT NULL,
   payload TEXT NOT NULL,
@@ -163,11 +164,21 @@ def _migrate_email_sections_and_agent_outputs(conn: sqlite3.Connection) -> None:
         cols.add("email_section_id")
     if "category" not in cols:
         conn.execute("ALTER TABLE agent_outputs ADD COLUMN category TEXT")
+        cols.add("category")
+    if "content_unit_key" not in cols:
+        conn.execute("ALTER TABLE agent_outputs ADD COLUMN content_unit_key TEXT")
+        cols.add("content_unit_key")
 
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_agent_outputs_email_section_kind
         ON agent_outputs(email_id, email_section_id, kind)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_agent_outputs_email_unit_kind
+        ON agent_outputs(email_id, content_unit_key, kind)
         """
     )
 

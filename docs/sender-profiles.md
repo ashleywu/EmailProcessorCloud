@@ -1,7 +1,8 @@
 # Sender Profiles — Design Spec
 
-**Status:** Planned — see [`implementation-status.md`](implementation-status.md)  
-**Prerequisite (SP1):** [`interrupt-grouping.md`](interrupt-grouping.md) **P1a only** — interrupt detection + strippable/retained helpers. **Not** P1b generic bridge.  
+**Status:** **Implemented / Frozen (SP1–SP3)** — see [`implementation-status.md`](implementation-status.md)  
+**SP4 Turing Post:** Deferred (Phase 8)  
+**Prerequisite (SP1–SP3):** [`interrupt-grouping.md`](interrupt-grouping.md) **P1a only** — interrupt detection + strippable/retained helpers. **Not** P1b generic bridge.  
 **Related:** [`map-reduce-radar-design.md`](map-reduce-radar-design.md) (AINews), [`milestone8-content-unit-routing.md`](../milestone8-content-unit-routing.md), `app/parsing/sender_match.py`
 
 ## V1 executive decisions (locked)
@@ -124,7 +125,7 @@ class SenderProfile:
 
 Lookup: `normalize_sender_email(from_header)` from `app/parsing/sender_match.py` → `SENDER_PROFILES.get(email)`.
 
-Persist per email: `sender_profile_applied`, `profile_fallback_triggered`, `fallback_reason` in `email_processing_decisions`.
+**Persistence (V1 shipped):** Profile audit fields live on the forced `kind=classifier` row (`routing_source=sender_profile`, `sender_profile`, `grouping_strategy`, `content_hash`, `processor_kind`, `content_unit_key`). Processor output is a sibling row with the same `content_unit_key`. Merged `content_hash` covers retained article-body sections only (strippable interrupts excluded). Dedicated `email_processing_decisions` table remains planned; use `app/audit/profile_email.py` for read-only replay.
 
 ---
 
@@ -430,14 +431,14 @@ Render `LeadershipEssayOutput.author_action_items` and `senior_engineer_actions`
 
 ## 11. Implementation phases
 
-| Phase | Scope |
-|-------|--------|
-| **SP0** | `config/sender_profiles.json` + `lookup_sender_profile()` + decision logging |
-| **SP1** | `SINGLE_TECH_ARTICLE` (ByteByteGo) — requires **interrupt-grouping P1a only** |
-| **SP2** | `SINGLE_LEADERSHIP_ESSAY` + `LeadershipEssayOutput` + composer — P1a only |
-| **SP3** | `SINGLE_TECH_LONGFORM` (`swyx@`) + `technical_longform` processor — P1a only |
-| **SP4** | Wire AINews entry in registry (refactor gate only; behavior unchanged) |
-| **SP5 (deferred)** | Turing Post + Phase 8 LINK_AGGREGATOR map-reduce |
+| Phase | Scope | Status |
+|-------|--------|--------|
+| **SP0** | Registry + `lookup_sender_profile()` + classifier audit fields | **Done** (inline registry; JSON config planned) |
+| **SP1** | `SINGLE_TECH_ARTICLE` (ByteByteGo) | **Frozen** |
+| **SP2** | `SINGLE_LEADERSHIP_ESSAY` + `LeadershipEssayOutput` | **Frozen** |
+| **SP3** | `SINGLE_TECH_LONGFORM` (`swyx@`) + `technical_longform` | **Frozen** |
+| **SP4** | AINews registry entry (refactor only) | **Deferred** |
+| **SP5** | Turing Post + Phase 8 map-reduce | **Deferred** |
 
 **Prerequisite order:**
 
