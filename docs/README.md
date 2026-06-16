@@ -5,7 +5,9 @@
 | Document | Status | Summary |
 |----------|--------|---------|
 | [`implementation-status.md`](implementation-status.md) | Living doc | What is live vs partial vs planned in the repo |
-| [`sender-profiles.md`](sender-profiles.md) | **Planned** | Profile fast path; generic fallback for Every / anomalies |
+| [`mixed-newsletter-shape-profile.md`](mixed-newsletter-shape-profile.md) | **Implemented** | Every + Turing Post shape grouping (merge / skip teaser) |
+| [`pipeline-flowchart.md`](pipeline-flowchart.md) | **Implemented** | End-to-end `DailyDigestAgent` flow (Mermaid) |
+| [`sender-profiles.md`](sender-profiles.md) | **Partially implemented** | SP1–SP3 fast path; Every/Turing use shape profile instead |
 | [`interrupt-grouping.md`](interrupt-grouping.md) | **Planned** | Shared interrupt detection; generic bridge for fallback |
 | [`map-reduce-radar-design.md`](map-reduce-radar-design.md) | **Implemented** | AINews map-reduce Radar |
 | [`section-extraction.md`](section-extraction.md) | **Implemented** | DOM sectionizer, links per slice |

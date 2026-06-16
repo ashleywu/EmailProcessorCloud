@@ -1,9 +1,10 @@
 # Sender Profiles — Design Spec
 
 **Status:** **Implemented / Frozen (SP1–SP3)** — see [`implementation-status.md`](implementation-status.md)  
-**SP4 Turing Post:** Deferred (Phase 8)  
+**SP4 Turing Post (sender profile):** Deferred (Phase 8)  
+**Every + Turing Post (shape profile):** **Implemented** — [`mixed-newsletter-shape-profile.md`](mixed-newsletter-shape-profile.md) (merge long-form; skip teaser; still uses content-unit classifier)  
 **Prerequisite (SP1–SP3):** [`interrupt-grouping.md`](interrupt-grouping.md) **P1a only** — interrupt detection + strippable/retained helpers. **Not** P1b generic bridge.  
-**Related:** [`map-reduce-radar-design.md`](map-reduce-radar-design.md) (AINews), [`milestone8-content-unit-routing.md`](../milestone8-content-unit-routing.md), `app/parsing/sender_match.py`
+**Related:** [`map-reduce-radar-design.md`](map-reduce-radar-design.md) (AINews), [`pipeline-flowchart.md`](pipeline-flowchart.md), [`milestone8-content-unit-routing.md`](../milestone8-content-unit-routing.md), `app/parsing/sender_match.py`
 
 ## V1 executive decisions (locked)
 
@@ -25,7 +26,7 @@ No Boundary Classifier. No interrupt bridge scoring. No generic pipeline unless 
 | 2 | **ByteByteGo SP1 needs P1a only** — not P1b bridge, not BC, not `multi_primary_url` fallback in V1 |
 | 3 | **Only structural counter-evidence → generic fallback**; processor / LLM / schema failure → **fail email, retry same profile** — never switch pipeline mid-run |
 
-Generic content-unit pipeline (bridge, BC, per-unit classifier) remains for **Every**, **unknown senders**, and **explicit structural fallback** — not as a prerequisite for profile rollout.
+Generic content-unit pipeline (bridge, BC, per-unit classifier) remains for **unknown senders** and **explicit structural fallback** — not as a prerequisite for profile rollout. **Every.to** and **Turing Post** use the content-unit path with a **newsletter shape profile** (deterministic merge) — see [`mixed-newsletter-shape-profile.md`](mixed-newsletter-shape-profile.md).
 
 ---
 
@@ -39,7 +40,8 @@ Known newsletter senders are **highly predictable** in shape:
 | A Life Engineered | One leadership essay; author action items matter |
 | Latent Space (`swyx@`) | One tech longform — interview **or** essay (same grouping) |
 | AINews (`swyx+ainews@`) | Long Radar digest — **already specialized** |
-| Turing Post | Tech article ± news roundup — **deferred** (Phase 8 dependency) |
+| Every.to | Long-form essay + chrome — **shape profile** (`every_to`) |
+| Turing Post | Long-form essay + roundup chrome — **shape profile** (`turing_post`); sender profile SP4 still deferred |
 
 Today every non-AINews email goes through the **generic** content-unit pipeline (group → classify → extract). That is correct for Every.to and anomalies, but wasteful and error-prone for the subscriptions above.
 
