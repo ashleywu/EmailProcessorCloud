@@ -6,6 +6,7 @@
 |----------|--------|---------|
 | [`implementation-status.md`](implementation-status.md) | Living doc | What is live vs partial vs planned in the repo |
 | [`mixed-newsletter-shape-profile.md`](mixed-newsletter-shape-profile.md) | **Implemented** | Every + Turing Post shape grouping (merge / skip teaser) |
+| [`architecture-diagram.md`](architecture-diagram.md) | **Implemented** | Layered architecture, routing overlap, data & eng lifecycle (Mermaid) |
 | [`pipeline-flowchart.md`](pipeline-flowchart.md) | **Implemented** | End-to-end `DailyDigestAgent` flow (Mermaid) |
 | [`sender-profiles.md`](sender-profiles.md) | **Partially implemented** | SP1–SP3 fast path; Every/Turing use shape profile instead |
 | [`interrupt-grouping.md`](interrupt-grouping.md) | **Planned** | Shared interrupt detection; generic bridge for fallback |

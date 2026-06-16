@@ -48,6 +48,7 @@
 | [`sender-profiles.md`](sender-profiles.md) | **Partially implemented** | SP1–SP3 frozen; Every/Turing use **shape profile** (not SP4) |
 | [`mixed-newsletter-shape-profile.md`](mixed-newsletter-shape-profile.md) | **Implemented** |
 | [`pipeline-flowchart.md`](pipeline-flowchart.md) | **Implemented** |
+| [`architecture-diagram.md`](architecture-diagram.md) | **Implemented** |
 | [`phase7.1-backlog.md`](phase7.1-backlog.md) | **Planned** |
 | `content-unit-classifiers.md` | **Removed** — policies split into milestone8 + sender-profiles + interrupt-grouping |
 | `content-unit-routing-design.md` | **Removed** — superseded by docs above |

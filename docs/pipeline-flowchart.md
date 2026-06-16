@@ -2,7 +2,7 @@
 
 **Status:** **Implemented** (production path)  
 **Orchestrator:** `DailyDigestAgent.run_daily()` in `app/agents/daily_digest_agent.py`  
-**Related:** [`mixed-newsletter-shape-profile.md`](mixed-newsletter-shape-profile.md), [`sender-profiles.md`](sender-profiles.md), [`map-reduce-radar-design.md`](map-reduce-radar-design.md), [`implementation-status.md`](implementation-status.md)
+**Related:** [`architecture-diagram.md`](architecture-diagram.md), [`mixed-newsletter-shape-profile.md`](mixed-newsletter-shape-profile.md), [`sender-profiles.md`](sender-profiles.md), [`map-reduce-radar-design.md`](map-reduce-radar-design.md), [`implementation-status.md`](implementation-status.md)
 
 Implementation-accurate end-to-end flow including AINews map-reduce, sender profiles, **newsletter shape profiles**, generic content-unit routing, cache reuse, quality gate, and Gmail label/archive semantics.
 
