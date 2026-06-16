@@ -78,6 +78,12 @@ class GroupingResult(BaseModel):
     ambiguous: bool
     ambiguity_reasons: list[GroupingAmbiguityReason] = Field(default_factory=list)
     non_promo_section_count: int = 0
+    digest_shape: str | None = None
+    digest_excluded_section_keys: list[str] = Field(default_factory=list)
+    shape_profile_id: str | None = None
+    distinct_canonical_story_urls: list[str] = Field(default_factory=list)
+    substantive_article_chars: int = 0
+    merged_section_keys: list[str] = Field(default_factory=list)
 
 
 class BoundaryOutlineSection(BaseModel):

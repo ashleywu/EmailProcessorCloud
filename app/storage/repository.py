@@ -30,7 +30,10 @@ from app.processing.profile_executor import (
     resolve_profile_plan,
 )
 from app.processing.sender_profiles import lookup_sender_profile
+from app.processing.newsletter_shape.profile import NewsletterShapeDecision
 from app.storage.db import init_schema, open_initialized
+
+SHAPE_CLASSIFIER_KIND = "shape_classifier"
 
 
 def _utc_now_iso() -> str:
@@ -203,6 +206,34 @@ class StateRepository:
         )
         self._conn.commit()
         return int(cur.lastrowid)
+
+    def save_newsletter_shape_decision(
+        self,
+        email_id: int,
+        *,
+        profile_id: str,
+        digest_shape: str,
+        digest_excluded_section_keys: list[str],
+        distinct_canonical_story_urls: list[str],
+        substantive_article_chars: int,
+        merged_section_keys: list[str] | None = None,
+    ) -> int:
+        decision = NewsletterShapeDecision(
+            shape_profile_id=profile_id,
+            digest_shape=digest_shape,
+            digest_excluded_section_keys=digest_excluded_section_keys,
+            distinct_canonical_story_urls=distinct_canonical_story_urls,
+            substantive_article_chars=substantive_article_chars,
+            merged_section_keys=merged_section_keys or [],
+        )
+        return self.save_agent_output(
+            email_id,
+            SHAPE_CLASSIFIER_KIND,
+            decision,
+            email_section_id=None,
+            content_unit_key=None,
+            category=None,
+        )
 
     def replace_email_sections(
         self,

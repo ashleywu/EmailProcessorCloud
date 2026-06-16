@@ -11,6 +11,8 @@ from collections.abc import Sequence
 
 from app.models.content_units import ContentUnit, GroupingAmbiguityReason, GroupingResult
 from app.models.section import EmailSection
+from app.processing.newsletter_shape.primary_urls import effective_primary_url_count
+from app.processing.newsletter_shape.registry import lookup_newsletter_shape_profile
 
 _LONG_FORM_CHAR_THRESHOLD = 1800
 _GRAY_ZONE_MIN_SECTIONS = 3
@@ -92,13 +94,19 @@ def _has_numbered_chapter_signal(sections: Sequence[EmailSection]) -> bool:
     return count >= 2
 
 
-def _looks_like_single_long_form(sections: Sequence[EmailSection]) -> bool:
+def _looks_like_single_long_form(
+    sections: Sequence[EmailSection],
+    *,
+    original_url: str | None = None,
+    sender: str | None = None,
+) -> bool:
     if not sections or len(sections) > _GRAY_ZONE_MAX_SECTIONS:
         return False
     total_chars = sum(_section_char_count(section) for section in sections)
     if total_chars < _LONG_FORM_CHAR_THRESHOLD:
         return False
-    return len(_extract_https_links(sections)) <= 1
+    profile = lookup_newsletter_shape_profile(sender, original_url)
+    return effective_primary_url_count(sections, original_url=original_url, profile=profile) <= 1
 
 
 def _has_mixed_heading_pattern(sections: Sequence[EmailSection]) -> bool:
@@ -116,7 +124,11 @@ def _has_mixed_heading_pattern(sections: Sequence[EmailSection]) -> bool:
 
 def _is_ambiguous(
     non_promo_sections: Sequence[EmailSection],
+    *,
+    original_url: str | None = None,
+    sender: str | None = None,
 ) -> tuple[bool, list[GroupingAmbiguityReason]]:
+    profile = lookup_newsletter_shape_profile(sender, original_url)
     reasons: list[GroupingAmbiguityReason] = []
     count = len(non_promo_sections)
     if count <= 1:
@@ -124,10 +136,14 @@ def _is_ambiguous(
     if _has_numbered_chapter_signal(non_promo_sections):
         return False, reasons
 
-    url_count = len(_extract_https_links(non_promo_sections))
+    url_count = effective_primary_url_count(
+        non_promo_sections,
+        original_url=original_url,
+        profile=profile,
+    )
     if url_count >= _MULTI_URL_SPLIT_THRESHOLD:
         return False, reasons
-    if _looks_like_single_long_form(non_promo_sections):
+    if _looks_like_single_long_form(non_promo_sections, original_url=original_url, sender=sender):
         return False, reasons
 
     if _GRAY_ZONE_MIN_SECTIONS <= count <= _GRAY_ZONE_MAX_SECTIONS:
@@ -141,9 +157,15 @@ def _is_ambiguous(
     return False, reasons
 
 
-def _deterministic_non_promo_groups(sections: Sequence[EmailSection]) -> list[list[EmailSection]]:
+def _deterministic_non_promo_groups(
+    sections: Sequence[EmailSection],
+    *,
+    original_url: str | None = None,
+    sender: str | None = None,
+) -> list[list[EmailSection]]:
+    profile = lookup_newsletter_shape_profile(sender, original_url)
     non_promo = [section for section in sections if not is_promo_section(section)]
-    if len(_extract_https_links(non_promo)) >= _MULTI_URL_SPLIT_THRESHOLD:
+    if effective_primary_url_count(non_promo, original_url=original_url, profile=profile) >= _MULTI_URL_SPLIT_THRESHOLD:
         return [[section] for section in non_promo]
     return split_non_promo_runs(sections)
 
@@ -299,24 +321,105 @@ def deterministic_units_for_run(
     return scoped
 
 
-def group_content_units(sections: Sequence[EmailSection]) -> GroupingResult:
+def group_content_units(
+    sections: Sequence[EmailSection],
+    *,
+    original_url: str | None = None,
+    sender: str | None = None,
+) -> GroupingResult:
+    from app.processing.newsletter_shape.grouping import substantive_article_chars
+    from app.processing.newsletter_shape.primary_urls import collect_distinct_canonical_story_urls
+    from app.processing.newsletter_shape.profile import DigestEmailShape
+    from app.processing.newsletter_shape.section_filters import digest_excluded_section_keys
+    from app.processing.newsletter_shape.shape_classifier import (
+        build_shape_units,
+        classify_newsletter_shape,
+    )
+
     ordered = list(sections)
     conservative_groups = [[section] for section in ordered]
     conservative_units = build_content_units_from_section_groups(conservative_groups)
 
-    non_promo = [section for section in ordered if not is_promo_section(section)]
-    ambiguous, ambiguity_reasons = _is_ambiguous(non_promo)
+    shape_profile = lookup_newsletter_shape_profile(sender, original_url)
+    if shape_profile is None:
+        non_promo = [section for section in ordered if not is_promo_section(section)]
+        ambiguous, ambiguity_reasons = _is_ambiguous(
+            non_promo,
+            original_url=original_url,
+            sender=sender,
+        )
+        non_promo_groups = _deterministic_non_promo_groups(
+            ordered,
+            original_url=original_url,
+            sender=sender,
+        )
+        if non_promo_groups:
+            final_groups = assemble_final_groups(ordered, non_promo_groups)
+            units = build_content_units_from_section_groups(final_groups)
+        else:
+            units = []
+        return GroupingResult(
+            units=units,
+            conservative_units=conservative_units,
+            ambiguous=ambiguous,
+            ambiguity_reasons=ambiguity_reasons,
+            non_promo_section_count=len(non_promo),
+        )
 
-    non_promo_groups = _deterministic_non_promo_groups(ordered)
-    final_groups = assemble_final_groups(ordered, non_promo_groups)
-    units = build_content_units_from_section_groups(final_groups)
+    digest_shape = classify_newsletter_shape(
+        ordered,
+        original_url=original_url,
+        profile=shape_profile,
+    )
+    excluded_keys = digest_excluded_section_keys(ordered, shape_profile)
+    distinct_urls = sorted(
+        collect_distinct_canonical_story_urls(
+            ordered,
+            original_url=original_url,
+            profile=shape_profile,
+        ),
+    )
+    article_chars = substantive_article_chars(ordered, shape_profile)
+
+    if digest_shape == DigestEmailShape.TEASER_PAYWALL:
+        return GroupingResult(
+            units=[],
+            conservative_units=conservative_units,
+            ambiguous=False,
+            ambiguity_reasons=[],
+            non_promo_section_count=0,
+            digest_shape=digest_shape.value,
+            digest_excluded_section_keys=excluded_keys,
+            shape_profile_id=shape_profile.profile_id,
+            distinct_canonical_story_urls=distinct_urls,
+            substantive_article_chars=article_chars,
+        )
+
+    units = build_shape_units(
+        ordered,
+        original_url=original_url,
+        profile=shape_profile,
+        shape=digest_shape,
+    )
+    merged_keys = units[0].section_keys if len(units) == 1 else []
+    non_promo = [
+        section
+        for section in ordered
+        if not is_promo_section(section) and section.section_id.strip() not in excluded_keys
+    ]
 
     return GroupingResult(
         units=units,
         conservative_units=conservative_units,
-        ambiguous=ambiguous,
-        ambiguity_reasons=ambiguity_reasons,
+        ambiguous=False,
+        ambiguity_reasons=[],
         non_promo_section_count=len(non_promo),
+        digest_shape=digest_shape.value,
+        digest_excluded_section_keys=excluded_keys,
+        shape_profile_id=shape_profile.profile_id,
+        distinct_canonical_story_urls=distinct_urls,
+        substantive_article_chars=article_chars,
+        merged_section_keys=merged_keys,
     )
 
 

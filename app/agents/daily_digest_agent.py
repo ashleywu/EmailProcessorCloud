@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.agents.boundary_classifier_agent import BoundaryClassifierAgent
@@ -86,6 +87,14 @@ _LOGGER = logging.getLogger(__name__)
 ProcessLink = tuple[int, str, frozenset[RouteCategory]]
 
 
+@dataclass(frozen=True, slots=True)
+class SkippedEmailLink:
+    """Shape-profile teaser/paywall — labeled in Gmail but not attached to digest."""
+
+    email_id: int
+    message_id: str
+
+
 class DailyDigestAgent:
     """Orchestrates fetch → parse → section caps → route → processors → compose → gate → send → label/archive."""
 
@@ -158,6 +167,7 @@ class DailyDigestAgent:
             return False
         digest_id: int | None = None
         success_links: list[ProcessLink] = []
+        skipped_links: list[SkippedEmailLink] = []
         try:
             candidates = self._merge_candidates()
             if not candidates:
@@ -168,12 +178,25 @@ class DailyDigestAgent:
                 title=self._digest_title(),
             )
             for pe in candidates:
-                link = self._process_one_email(pe.id, pe.message_id, digest_id)
-                if link is not None:
-                    success_links.append(link)
+                outcome = self._process_one_email(pe.id, pe.message_id, digest_id)
+                if isinstance(outcome, SkippedEmailLink):
+                    skipped_links.append(outcome)
+                elif outcome is not None:
+                    success_links.append(outcome)
+
+            if not success_links and not skipped_links:
+                self._repo.update_digest_status(digest_id, DIGEST_STATUS_EMPTY)
+                return True
 
             if not success_links:
                 self._repo.update_digest_status(digest_id, DIGEST_STATUS_EMPTY)
+                for skipped in skipped_links:
+                    self._labeler.add_labels(
+                        skipped.message_id,
+                        [PROCESSED_LABEL],
+                        remove=[INBOX_LABEL],
+                    )
+                    self._repo.update_email_status(skipped.email_id, "skipped")
                 return True
 
             email_ids = [lid[0] for lid in success_links]
@@ -216,6 +239,13 @@ class DailyDigestAgent:
                     remove=[INBOX_LABEL],
                 )
                 self._repo.update_email_status(email_id, "archived")
+            for skipped in skipped_links:
+                self._labeler.add_labels(
+                    skipped.message_id,
+                    [PROCESSED_LABEL],
+                    remove=[INBOX_LABEL],
+                )
+                self._repo.update_email_status(skipped.email_id, "skipped")
 
             return True
 
@@ -244,7 +274,7 @@ class DailyDigestAgent:
         email_id: int,
         message_id: str,
         digest_id: int,
-    ) -> ProcessLink | None:
+    ) -> ProcessLink | SkippedEmailLink | None:
         if self._uses_map_reduce_radar(email_id, message_id):
             return self._process_map_reduce_radar_email(email_id, message_id, digest_id)
 
@@ -388,12 +418,25 @@ class DailyDigestAgent:
             return None
         return resolve_profile_plan(profile, parsed)
 
+    def _persist_shape_decision(self, email_id: int, grouping: GroupingResult) -> None:
+        if grouping.shape_profile_id is None or grouping.digest_shape is None:
+            return
+        self._repo.save_newsletter_shape_decision(
+            email_id,
+            profile_id=grouping.shape_profile_id,
+            digest_shape=grouping.digest_shape,
+            digest_excluded_section_keys=grouping.digest_excluded_section_keys,
+            distinct_canonical_story_urls=grouping.distinct_canonical_story_urls,
+            substantive_article_chars=grouping.substantive_article_chars,
+            merged_section_keys=grouping.merged_section_keys,
+        )
+
     def _process_content_unit_email(
         self,
         email_id: int,
         message_id: str,
         digest_id: int,
-    ) -> ProcessLink | None:
+    ) -> ProcessLink | SkippedEmailLink | None:
         assert self._content_unit_classifier is not None
 
         reuse = self._repo.try_reuse_complete_outputs(email_id)
@@ -461,7 +504,20 @@ class DailyDigestAgent:
                 self._repo.attach_email_to_digest(digest_id, email_id)
                 return (email_id, message_id, frozenset({category}))
 
-            grouping = group_content_units(parsed.sections)
+            grouping = group_content_units(
+                parsed.sections,
+                original_url=parsed.original_url,
+                sender=sender,
+            )
+
+            if grouping.digest_shape == "teaser_paywall" and not grouping.units:
+                self._persist_shape_decision(email_id, grouping)
+                self._repo.update_email_status(email_id, "skipped")
+                return SkippedEmailLink(email_id, message_id)
+
+            if grouping.shape_profile_id is not None:
+                self._persist_shape_decision(email_id, grouping)
+
             units = self._resolve_content_units(
                 email_id=email_id,
                 parsed=parsed,
